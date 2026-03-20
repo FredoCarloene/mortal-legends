@@ -16,8 +16,8 @@ local TWO_PI = PI * 2
 
 -- ─── CHARACTERS ───
 local CHARACTERS = {
-    gandhi = { name = "GANDHI", accent = {232/255, 169/255, 38/255}, punchDmg = 4, kickDmg = 6, specialDmg = 12, speed = 3.8, blockReduction = 0.85 },
-    binladen = { name = "BIN LADEN", accent = {192/255, 57/255, 43/255}, punchDmg = 4, kickDmg = 6, specialDmg = 12, speed = 3.8, blockReduction = 0.85 },
+    gandhi = { name = "GANDHI", accent = {232/255, 169/255, 38/255}, punchDmg = 2, kickDmg = 4, specialDmg = 12, speed = 3.8, blockReduction = 0.85 },
+    binladen = { name = "BIN LADEN", accent = {192/255, 57/255, 43/255}, punchDmg = 2, kickDmg = 4, specialDmg = 12, speed = 3.8, blockReduction = 0.85 },
 }
 
 -- ─── COLOR HELPERS ───
