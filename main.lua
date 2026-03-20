@@ -386,7 +386,7 @@ local function drawLine(x1, y1, x2, y2, lw)
 end
 
 -- ─── DRAW GANDHI ───
-local function drawGandhi(bobY, action, isBlocking, fr, superActive)
+local function drawGandhi(bobY, action, isBlocking, fr, superActive, superReady, superBoomerangs)
     -- Dhoti body
     setColor(C.dhoti); fillRect(-15, 25 + bobY, 30, 45)
     -- Drape
@@ -451,6 +451,20 @@ local function drawGandhi(bobY, action, isBlocking, fr, superActive)
         -- Walking stick (only when not in super mode)
         if not superActive then
             setColor(C.stick); fillRect(22, 25 + bobY, 3, 50)
+        end
+    end
+
+    -- Boomerang icons above head (shown when super is ready OR active)
+    if superReady or superActive then
+        local boomerangsToShow = superActive and superBoomerangs or 2
+        for i = 1, 2 do
+            if i <= boomerangsToShow then
+                love.graphics.setColor(232/255, 169/255, 38/255, 1) -- live boomerang (gold)
+            else
+                love.graphics.setColor(0.3, 0.3, 0.3, 0.5) -- spent (dark)
+            end
+            -- Draw small boomerang shape (horizontal bar)
+            fillRect(-8 + (i-1) * 14, -12 + bobY, 10, 4)
         end
     end
 end
@@ -589,7 +603,7 @@ local function drawCharacter(player, facing, fr, action, isBlocking, superReady,
     end
 
     if isGandhi then
-        drawGandhi(bobY, action, isBlocking, fr, superActive)
+        drawGandhi(bobY, action, isBlocking, fr, superActive, superReady, player.superBoomerangs or 0)
     else
         drawBinLaden(bobY, action, isBlocking, fr, superActive, superBullets, superReady)
     end
@@ -985,14 +999,23 @@ function love.update(dt)
                 elseif held["h"] and g.p1.special >= 100 then g.p1.action = "special"; g.p1.actionTimer = 30; g.p1.special = 0; handleAttack(g.p1, g.p2, "special")
                 end
             end
-            -- Super: Gandhi fires 2 boomerangs
+            -- Super: Gandhi tap-fires boomerangs (2 max, one per T press)
             if justPressed["t"] and g.p1.superReady and not g.p1.superActive then
                 g.p1.superReady = false; g.p1.superActive = true; g.p1.superBoomerangs = 2
-                g.p1.action = "super"; g.p1.actionTimer = 25; SFX.boomerang()
+                SFX.boomerang()
                 local dir = g.p1.facing
-                table.insert(g.projectiles, { type = "boomerang", owner = "p1", x = g.p1.x + CHAR_W/2 + dir*20, y = g.p1.y + 30, dir = dir, startX = g.p1.x + CHAR_W/2, phase = "out", rotation = 0, age = 0, hit = false })
-                table.insert(g.projectiles, { type = "boomerang", owner = "p1", x = g.p1.x + CHAR_W/2 + dir*20, y = g.p1.y + 50, dir = dir, startX = g.p1.x + CHAR_W/2, phase = "out", rotation = 1.5, age = 0, hit = false })
-                addGameTimer(2.0, function() g.p1.superActive = false; g.p1.superBoomerangs = 0; g.p1.action = nil end)
+                table.insert(g.projectiles, { type = "boomerang", owner = "p1", x = g.p1.x + CHAR_W/2 + dir*20, y = g.p1.y + 35, dir = dir, startX = g.p1.x + CHAR_W/2, phase = "out", rotation = 0, age = 0, hit = false })
+                g.p1.superBoomerangs = 1
+                g.p1.action = "super"; g.p1.actionTimer = 15
+            elseif justPressed["t"] and g.p1.superActive and g.p1.superBoomerangs > 0 then
+                SFX.boomerang()
+                local dir = g.p1.facing
+                table.insert(g.projectiles, { type = "boomerang", owner = "p1", x = g.p1.x + CHAR_W/2 + dir*20, y = g.p1.y + 35, dir = dir, startX = g.p1.x + CHAR_W/2, phase = "out", rotation = 1.5, age = 0, hit = false })
+                g.p1.superBoomerangs = g.p1.superBoomerangs - 1
+                g.p1.action = "super"; g.p1.actionTimer = 15
+                if g.p1.superBoomerangs <= 0 then
+                    addGameTimer(0.5, function() g.p1.superActive = false; g.p1.action = nil end)
+                end
             end
         end
 
