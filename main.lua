@@ -391,10 +391,11 @@ local function drawGandhi(bobY, action, isBlocking, fr, superActive)
     setColor(C.dhoti); fillRect(-15, 25 + bobY, 30, 45)
     -- Drape
     setColor(C.drape); fillRect(-18, 40 + bobY, 6, 30)
-    -- Legs
-    setColor(C.leg_gandhi); fillRect(-12, 70 + bobY, 8, 18); fillRect(4, 70 + bobY, 8, 18)
-    -- Sandals
-    setColor(C.sandal); fillRect(-14, 86 + bobY, 12, 4); fillRect(2, 86 + bobY, 12, 4)
+    -- Legs (skip during kick — drawn in kick pose instead)
+    if action ~= "kick" then
+        setColor(C.leg_gandhi); fillRect(-12, 70 + bobY, 8, 18); fillRect(4, 70 + bobY, 8, 18)
+        setColor(C.sandal); fillRect(-14, 86 + bobY, 12, 4); fillRect(2, 86 + bobY, 12, 4)
+    end
     -- Head
     setColor(C.skin); fillCircle(0, 18 + bobY, 16)
     -- Glasses
@@ -422,8 +423,14 @@ local function drawGandhi(bobY, action, isBlocking, fr, superActive)
         setColor(C.skin); fillRect(15, 30 + bobY, 30, 8)
         setColor(C.stick); fillRect(40, 25 + bobY, 4, 25)
     elseif action == "kick" then
-        setColor(C.skin); fillRect(15, 30 + bobY, 15, 8); fillRect(-15, 30 + bobY, 15, 8)
+        -- Standing leg
+        setColor(C.leg_gandhi); fillRect(-12, 70 + bobY, 8, 18)
+        setColor(C.sandal); fillRect(-14, 86 + bobY, 12, 4)
+        -- Kicking leg (extended)
         setColor(C.leg_gandhi); fillRect(12, 65 + bobY, 28, 8)
+        setColor(C.sandal); fillRect(36, 63 + bobY, 12, 4)
+        -- Arms crossed
+        setColor(C.skin); fillRect(15, 30 + bobY, 15, 8); fillRect(-15, 30 + bobY, 15, 8)
     elseif action == "special" then
         local angle = fr * 0.5
         love.graphics.push()
@@ -454,10 +461,11 @@ local function drawBinLaden(bobY, action, isBlocking, fr, superActive, superBull
     setColor(C.robe); fillRect(-18, 22 + bobY, 36, 50)
     setColor(C.robe_collar); fillRect(-18, 22 + bobY, 36, 5)
     setColor(C.robe_center); fillRect(-2, 22 + bobY, 4, 50)
-    -- Legs
-    setColor(C.leg_bin); fillRect(-12, 70 + bobY, 8, 18); fillRect(4, 70 + bobY, 8, 18)
-    -- Boots
-    setColor(C.boot); fillRect(-14, 84 + bobY, 12, 6); fillRect(2, 84 + bobY, 12, 6)
+    -- Legs (skip during kick — drawn in kick pose instead)
+    if action ~= "kick" then
+        setColor(C.leg_bin); fillRect(-12, 70 + bobY, 8, 18); fillRect(4, 70 + bobY, 8, 18)
+        setColor(C.boot); fillRect(-14, 84 + bobY, 12, 6); fillRect(2, 84 + bobY, 12, 6)
+    end
     -- Turban
     setColor(C.turban)
     love.graphics.arc("fill", "pie", 0, 12 + bobY, 17, -PI, 0)
@@ -507,9 +515,14 @@ local function drawBinLaden(bobY, action, isBlocking, fr, superActive, superBull
         setColor(C.robe); fillRect(15, 30 + bobY, 30, 10)
         setColor(C.skin); fillRect(42, 28 + bobY, 10, 12)
     elseif action == "kick" then
-        setColor(C.robe); fillRect(15, 30 + bobY, 15, 8); fillRect(-15, 30 + bobY, 15, 8)
+        -- Standing leg
+        setColor(C.leg_bin); fillRect(-12, 70 + bobY, 8, 18)
+        setColor(C.boot); fillRect(-14, 84 + bobY, 12, 6)
+        -- Kicking leg (extended)
         setColor(C.leg_bin); fillRect(12, 65 + bobY, 30, 10)
         setColor(C.boot); fillRect(38, 63 + bobY, 10, 12)
+        -- Arms guard
+        setColor(C.robe); fillRect(15, 30 + bobY, 15, 8); fillRect(-15, 30 + bobY, 15, 8)
     elseif action == "special" then
         setColor(C.robe); fillRect(15, 25 + bobY, 20, 8); fillRect(-35, 25 + bobY, 20, 8)
         local ps = 20 + math.sin(fr * 0.4) * 8
