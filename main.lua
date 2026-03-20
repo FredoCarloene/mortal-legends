@@ -1091,7 +1091,7 @@ function love.keypressed(key, scancode, isrepeat)
         if gameState == "fighting" then SFX.menuBack(); gameState = "paused"; menuIndex = 1
         elseif gameState == "paused" then resumeGame()
         elseif gameState == "about" or gameState == "controls" then SFX.menuBack(); gameState = hasPlayed and "paused" or "menu"
-        elseif gameState == "gameover" then gameState = "menu"; menuIndex = 1; announcement = ""
+        elseif gameState == "gameover" then gameState = "menu"; menuIndex = 1; announcement = ""; hasPlayed = false
         end
         return
     end
@@ -1111,7 +1111,7 @@ function love.keypressed(key, scancode, isrepeat)
     end
 
     if gameState == "gameover" and (key == "return" or key == "space") then
-        gameState = "menu"; menuIndex = 1; announcement = ""
+        gameState = "menu"; menuIndex = 1; announcement = ""; hasPlayed = false
     end
 end
 
