@@ -323,7 +323,7 @@ local function updateProjectiles()
             p.x = p.x + p.dir * 14
             if math.abs(p.x - targetCX) < 30 and math.abs(p.y - targetCY) < 45 and not p.hit then
                 p.hit = true
-                local dmg = target.isBlocking and 4 or 12
+                local dmg = target.isBlocking and 2 or 6
                 target.health = math.max(0, target.health - dmg)
                 target.hitStun = 6
                 g.shakeFrames = 4
