@@ -715,13 +715,14 @@ local function drawHealthBar(x, y, health, maxHealth, special, name, accent, isR
     local ratio = math.max(0, health / maxHealth)
     local specR = math.min(1, special / 100)
 
-    -- Name
+    -- Name with dark background for readability
+    love.graphics.setColor(0, 0, 0, 0.5); fillRect(x, y - 16, barW, 15)
     love.graphics.setFont(pixelFontSmall)
     setColor(C.white)
     if isRight then
-        love.graphics.printf(name, x, y - 18, barW, "right")
+        love.graphics.printf(name, x, y - 15, barW, "right")
     else
-        love.graphics.printf(name, x, y - 18, barW, "left")
+        love.graphics.printf(name, x, y - 15, barW, "left")
     end
 
     -- Health bar bg
@@ -1300,29 +1301,29 @@ function love.draw()
         drawComboText(g.p2.x + CHAR_W / 2, g.p2.y, g.p1.combo, frame)
 
         -- HUD
-        drawHealthBar(20, 12, g.p1.health, g.p1.maxHealth, g.p1.special, CHARACTERS.gandhi.name, CHARACTERS.gandhi.accent, false, g.p1.superReady, g.p1.superActive, "BOOMERANG", g.p1.superBoomerangs)
-        drawHealthBar(500, 12, g.p2.health, g.p2.maxHealth, g.p2.special, CHARACTERS.binladen.name, CHARACTERS.binladen.accent, true, g.p2.superReady, g.p2.superActive, "AK-47", g.p2.superBullets)
+        drawHealthBar(20, 28, g.p1.health, g.p1.maxHealth, g.p1.special, CHARACTERS.gandhi.name, CHARACTERS.gandhi.accent, false, g.p1.superReady, g.p1.superActive, "BOOMERANG", g.p1.superBoomerangs)
+        drawHealthBar(500, 28, g.p2.health, g.p2.maxHealth, g.p2.special, CHARACTERS.binladen.name, CHARACTERS.binladen.accent, true, g.p2.superReady, g.p2.superActive, "AK-47", g.p2.superBullets)
 
         -- Timer box
-        love.graphics.setColor(17/255, 17/255, 17/255, 1); fillRect(STAGE_W/2 - 30, 8, 60, 35)
-        love.graphics.setColor(232/255, 169/255, 38/255, 1); strokeRect(STAGE_W/2 - 30, 8, 60, 35, 2)
+        love.graphics.setColor(17/255, 17/255, 17/255, 1); fillRect(STAGE_W/2 - 30, 24, 60, 35)
+        love.graphics.setColor(232/255, 169/255, 38/255, 1); strokeRect(STAGE_W/2 - 30, 24, 60, 35, 2)
         love.graphics.setFont(pixelFontLarge)
         love.graphics.setColor(timer <= 10 and {1, 0.2, 0.2, 1} or {1, 1, 1, 1})
-        love.graphics.printf(tostring(timer), STAGE_W/2 - 30, 12, 60, "center")
+        love.graphics.printf(tostring(timer), STAGE_W/2 - 30, 28, 60, "center")
 
         -- Round indicator
         love.graphics.setFont(pixelFontTiny)
         love.graphics.setColor(0.53, 0.53, 0.53, 1)
-        love.graphics.printf("ROUND " .. round, STAGE_W/2 - 40, 48, 80, "center")
+        love.graphics.printf("ROUND " .. round, STAGE_W/2 - 40, 64, 80, "center")
 
         -- Win dots
         for i = 0, 1 do
             love.graphics.setColor(i < wins.p1 and {232/255, 169/255, 38/255, 1} or {51/255, 51/255, 51/255, 1})
-            fillCircle(330 + i * 15, 53, 4)
+            fillCircle(330 + i * 15, 69, 4)
         end
         for i = 0, 1 do
             love.graphics.setColor(i < wins.p2 and {192/255, 57/255, 43/255, 1} or {51/255, 51/255, 51/255, 1})
-            fillCircle(455 + i * 15, 53, 4)
+            fillCircle(455 + i * 15, 69, 4)
         end
 
         -- ESC hint
