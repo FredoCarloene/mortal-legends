@@ -16,8 +16,8 @@ local TWO_PI = PI * 2
 
 -- ─── CHARACTERS ───
 local CHARACTERS = {
-    gandhi = { name = "GANDHI", accent = {232/255, 169/255, 38/255}, punchDmg = 8, kickDmg = 11, specialDmg = 22, speed = 3.8, blockReduction = 0.7 },
-    binladen = { name = "BIN LADEN", accent = {192/255, 57/255, 43/255}, punchDmg = 8, kickDmg = 11, specialDmg = 22, speed = 3.8, blockReduction = 0.7 },
+    gandhi = { name = "GANDHI", accent = {232/255, 169/255, 38/255}, punchDmg = 4, kickDmg = 6, specialDmg = 12, speed = 3.8, blockReduction = 0.85 },
+    binladen = { name = "BIN LADEN", accent = {192/255, 57/255, 43/255}, punchDmg = 4, kickDmg = 6, specialDmg = 12, speed = 3.8, blockReduction = 0.85 },
 }
 
 -- ─── COLOR HELPERS ───
@@ -310,7 +310,7 @@ local function updateProjectiles()
             -- Hit check
             if math.abs(p.x - targetCX) < 35 and math.abs(p.y - targetCY) < 50 and not p.hit then
                 p.hit = true
-                local dmg = target.isBlocking and 5 or 15
+                local dmg = target.isBlocking and 2 or 8
                 target.health = math.max(0, target.health - dmg)
                 target.hitStun = 12
                 g.shakeFrames = 6
@@ -323,7 +323,7 @@ local function updateProjectiles()
             p.x = p.x + p.dir * 14
             if math.abs(p.x - targetCX) < 30 and math.abs(p.y - targetCY) < 45 and not p.hit then
                 p.hit = true
-                local dmg = target.isBlocking and 2 or 6
+                local dmg = target.isBlocking and 1 or 4
                 target.health = math.max(0, target.health - dmg)
                 target.hitStun = 6
                 g.shakeFrames = 4
