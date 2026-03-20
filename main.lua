@@ -456,7 +456,7 @@ local function drawGandhi(bobY, action, isBlocking, fr, superActive)
 end
 
 -- ─── DRAW BIN LADEN ───
-local function drawBinLaden(bobY, action, isBlocking, fr, superActive, superBullets)
+local function drawBinLaden(bobY, action, isBlocking, fr, superActive, superBullets, superReady)
     -- Robe
     setColor(C.robe); fillRect(-18, 22 + bobY, 36, 50)
     setColor(C.robe_collar); fillRect(-18, 22 + bobY, 36, 5)
@@ -505,12 +505,6 @@ local function drawBinLaden(bobY, action, isBlocking, fr, superActive, superBull
             setColor(C.muzzle_yellow); fillCircle(60, 31 + bobY, 6)
             setColor(C.muzzle_white); fillCircle(60, 31 + bobY, 3)
         end
-        -- Bullet counter
-        if superBullets > 0 then
-            love.graphics.setColor(1, 0.27, 0.27, 1)
-            love.graphics.setFont(pixelFontTiny)
-            love.graphics.printf(tostring(superBullets), -20, -5 + bobY, 40, "center")
-        end
     elseif action == "punch" then
         setColor(C.robe); fillRect(15, 30 + bobY, 30, 10)
         setColor(C.skin); fillRect(42, 28 + bobY, 10, 12)
@@ -535,6 +529,19 @@ local function drawBinLaden(bobY, action, isBlocking, fr, superActive, superBull
         -- Idle arms
         setColor(C.robe); fillRect(15, 30 + bobY, 15, 8); fillRect(-30, 30 + bobY, 15, 8)
         setColor(C.skin); fillRect(28, 28 + bobY, 8, 10); fillRect(-30, 28 + bobY, 8, 10)
+    end
+
+    -- Bullet icons above head (shown when super is ready OR active)
+    if superReady or superActive then
+        local bulletsToShow = superActive and superBullets or 5
+        for i = 1, 5 do
+            if i <= bulletsToShow then
+                love.graphics.setColor(1, 0.85, 0.2, 1) -- live bullet (gold)
+            else
+                love.graphics.setColor(0.3, 0.3, 0.3, 0.5) -- spent (dark)
+            end
+            fillRect(-14 + (i-1) * 7, -12 + bobY, 4, 8)
+        end
     end
 end
 
@@ -584,7 +591,7 @@ local function drawCharacter(player, facing, fr, action, isBlocking, superReady,
     if isGandhi then
         drawGandhi(bobY, action, isBlocking, fr, superActive)
     else
-        drawBinLaden(bobY, action, isBlocking, fr, superActive, superBullets)
+        drawBinLaden(bobY, action, isBlocking, fr, superActive, superBullets, superReady)
     end
 
     love.graphics.pop()
@@ -862,6 +869,8 @@ end
 
 -- ─── ROUND END ───
 handleRoundEnd = function(winner)
+    -- Prevent double-trigger
+    if gameState ~= "fighting" then return end
     gameState = "ko"; announcement = "K.O.!"; SFX.ko()
     if winner ~= "draw" then wins[winner] = wins[winner] + 1 end
 
