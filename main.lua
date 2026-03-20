@@ -310,7 +310,7 @@ local function updateProjectiles()
             -- Hit check
             if math.abs(p.x - targetCX) < 35 and math.abs(p.y - targetCY) < 50 and not p.hit then
                 p.hit = true
-                local dmg = target.isBlocking and 2 or 8
+                local dmg = target.isBlocking and 2 or 10
                 target.health = math.max(0, target.health - dmg)
                 target.hitStun = 12
                 g.shakeFrames = 6
