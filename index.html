@@ -413,8 +413,8 @@ function FightingGame(){
     sfx.init();sfx.menuSelect();
     const code=genCode();setRoomCode(code);setPlayerRole("p1");roleR.current="host";
     setScreen("waiting");setStatusMsg("Creating room...");
-    const peer=new Peer("ML-"+code,{debug:0});peerR.current=peer;
-    peer.on("open",()=>setStatusMsg("Waiting for opponent..."));
+    const peer=new Peer("ML-"+code,{debug:2});peerR.current=peer;
+    peer.on("open",id=>{console.log("Host peer open:",id);setStatusMsg("Waiting for opponent...")});
     peer.on("connection",c=>setupConn(c,"host"));
     peer.on("error",e=>{if(e.type==="unavailable-id"){setStatusMsg("Code taken, retry");setScreen("lobby")}else setStatusMsg("Error: "+e.type)});
   },[setupConn]);
@@ -423,9 +423,10 @@ function FightingGame(){
     if(!code||code.length!==4){setStatusMsg("Enter 4-char code");return}
     sfx.init();sfx.menuSelect();setPlayerRole("p2");roleR.current="client";
     setScreen("waiting");setStatusMsg("Connecting...");
-    const peer=new Peer(undefined,{debug:0});peerR.current=peer;
-    peer.on("open",()=>{
-      const c=peer.connect("ML-"+code.toUpperCase(),{reliable:true});setupConn(c,"client");
+    const peer=new Peer(undefined,{debug:2});peerR.current=peer;
+    peer.on("open",id=>{
+      console.log("Client peer open:",id);
+      const c=peer.connect("ML-"+code.toUpperCase(),{reliable:true});console.log("Connecting to ML-"+code.toUpperCase());setupConn(c,"client");
       setTimeout(()=>{if(!connR.current?.open){setStatusMsg("Room not found");setScreen("lobby")}},8000);
     });
     peer.on("error",e=>{setStatusMsg(e.type==="peer-unavailable"?"Room not found":"Error: "+e.type);setScreen("lobby")});
@@ -579,7 +580,7 @@ function FightingGame(){
   const bs={fontFamily:PF,cursor:"pointer",userSelect:"none",border:"none",borderRadius:8,fontWeight:"bold"};
 
   return(<div style={{background:"#000",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:PF,padding:10,overflow:"hidden"}}>
-    {screen==="lobby"&&<div style={{maxWidth:420,width:"100%",textAlign:"center",padding:20}}><div style={{color:"#ff2222",fontSize:22,marginBottom:4,textShadow:"0 0 20px #ff4444"}}>MORTAL</div><div style={{color:"#ff2222",fontSize:22,marginBottom:16,textShadow:"0 0 20px #ff4444"}}>LEGENDS</div><div style={{color:"#e8a926",fontSize:9,marginBottom:30}}>ONLINE MULTIPLAYER</div><button onClick={createRoom} style={{...bs,width:"100%",padding:"14px 0",fontSize:12,color:"#000",background:"#e8a926",marginBottom:16}}>CREATE ROOM (P1)</button><div style={{color:"#888",fontSize:8,marginBottom:12}}>— OR JOIN —</div><div style={{display:"flex",gap:8,marginBottom:12}}><input value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().slice(0,4))} placeholder="CODE" maxLength={4} style={{flex:1,padding:12,fontSize:16,fontFamily:PF,background:"#111",border:"2px solid #444",borderRadius:8,color:"#fff",textAlign:"center",letterSpacing:6}}/><button onClick={()=>joinRoom(joinCode)} disabled={joinCode.length!==4} style={{...bs,padding:"12px 20px",fontSize:10,color:"#000",background:joinCode.length===4?"#c0392b":"#555"}}>JOIN</button></div>{statusMsg&&<div style={{color:"#ff4444",fontSize:8,marginTop:12}}>{statusMsg}</div>}<div style={{color:"#444",fontSize:6,marginTop:30,lineHeight:1.8}}>P1 = GANDHI · P2 = BIN LADEN<br/>EACH PLAYER USES OWN PHONE<br/>WebRTC P2P · NO SERVER</div></div>}
+    {screen==="lobby"&&<div style={{maxWidth:420,width:"100%",textAlign:"center",padding:20}}><div style={{color:"#ff2222",fontSize:22,marginBottom:4,textShadow:"0 0 20px #ff4444"}}>MORTAL</div><div style={{color:"#ff2222",fontSize:22,marginBottom:16,textShadow:"0 0 20px #ff4444"}}>LEGENDS</div><div style={{color:"#e8a926",fontSize:9,marginBottom:30}}>ONLINE MULTIPLAYER</div><button onClick={createRoom} style={{...bs,width:"100%",padding:"14px 0",fontSize:12,color:"#000",background:"#e8a926",marginBottom:16}}>CREATE ROOM (P1)</button><div style={{color:"#888",fontSize:8,marginBottom:12}}>— OR JOIN —</div><div style={{display:"flex",gap:8,marginBottom:12}}><input value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().slice(0,4))} onKeyDown={e=>{if(e.key==="Enter"&&joinCode.length===4)joinRoom(joinCode)}} placeholder="CODE" maxLength={4} style={{flex:1,padding:12,fontSize:16,fontFamily:PF,background:"#111",border:"2px solid #444",borderRadius:8,color:"#fff",textAlign:"center",letterSpacing:6}}/><button onClick={()=>joinRoom(joinCode)} disabled={joinCode.length!==4} style={{...bs,padding:"12px 20px",fontSize:10,color:joinCode.length===4?"#fff":"#000",background:joinCode.length===4?"#c0392b":"#555"}}>JOIN</button></div>{statusMsg&&<div style={{color:"#ff4444",fontSize:8,marginTop:12}}>{statusMsg}</div>}<div style={{color:"#444",fontSize:6,marginTop:30,lineHeight:1.8}}>P1 = GANDHI · P2 = BIN LADEN<br/>EACH PLAYER USES OWN PHONE<br/>WebRTC P2P · NO SERVER</div></div>}
 
     {screen==="waiting"&&<div style={{maxWidth:420,width:"100%",textAlign:"center",padding:20}}><div style={{color:"#e8a926",fontSize:14,marginBottom:20}}>WAITING FOR OPPONENT</div>{roomCode&&<><div style={{color:"#888",fontSize:8,marginBottom:8}}>ROOM CODE:</div><div style={{color:"#fff",fontSize:36,letterSpacing:12,marginBottom:16,textShadow:"0 0 20px #e8a926"}}>{roomCode}</div><div style={{color:"#888",fontSize:7,marginBottom:12}}>Share code or link with opponent</div><button onClick={cpL} style={{...bs,padding:"10px 24px",fontSize:8,color:"#e8a926",background:"transparent",border:"2px solid #e8a926",borderRadius:8,marginBottom:16}}>{copied?"COPIED!":"COPY INVITE LINK"}</button></>}<div style={{color:"#888",fontSize:8,marginTop:12}}>{statusMsg}</div><div style={{margin:"20px auto",width:24,height:24,border:"3px solid #e8a926",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style><button onClick={()=>{connR.current?.close();peerR.current?.destroy();setScreen("lobby");setStatusMsg("")}} style={{...bs,marginTop:20,padding:"8px 20px",fontSize:8,color:"#666",background:"transparent",border:"1px solid #333"}}>CANCEL</button></div>}
 
