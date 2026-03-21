@@ -253,7 +253,7 @@ local function makePlayer(id, x, facing)
         action = nil, actionTimer = 0, facing = facing,
         isJumping = false, isBlocking = false,
         combo = 0, comboTimer = 0, hitStun = 0, dmgDealt = 0,
-        superReady = false, superActive = false, superBullets = 0, superBoomerangs = 0,
+        superReady = false, superActive = false, superUsed = false, superBullets = 0, superBoomerangs = 0,
     }
 end
 
@@ -866,8 +866,8 @@ handleAttack = function(attacker, defender, atype)
         defender.hitStun = atype == "special" and 15 or 8
         attacker.special = math.min(100, attacker.special + dmg * 0.8)
         attacker.dmgDealt = attacker.dmgDealt + dmg
-        if not attacker.superReady and not attacker.superActive and attacker.dmgDealt >= defender.maxHealth * 0.5 then
-            attacker.superReady = true; SFX.superReady()
+        if not attacker.superReady and not attacker.superActive and not attacker.superUsed and attacker.dmgDealt >= defender.maxHealth * 0.5 then
+            attacker.superReady = true; attacker.superUsed = true; SFX.superReady()
         end
         table.insert(g.hitEffects, {
             x = (attacker.x + defender.x) / 2 + CHAR_W / 2,
