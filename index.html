@@ -18,11 +18,8 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .fight-wrap canvas{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
 .ctrl-layer{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
 .ctrl-layer button{pointer-events:auto}
-.dpad{position:fixed;bottom:8px;left:8px;z-index:20;display:flex;flex-direction:column;align-items:center;gap:0}
-.dpad-row{display:flex;gap:0;align-items:center}
-.atk-area{position:fixed;bottom:8px;right:8px;z-index:20;display:flex;flex-direction:column;align-items:center;gap:4px}
-.atk-top{display:flex;gap:6px}
-.atk-bot{display:flex;gap:6px}
+.dpad{z-index:20}
+.atk-area{z-index:20}
 .you-label{position:fixed;top:4px;left:50%;transform:translateX(-50%);z-index:20}
 .rotate-msg{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;align-items:center;justify-content:center;flex-direction:column;z-index:99;display:none}
 @media(orientation:portrait){
@@ -590,7 +587,7 @@ function Game(){
   const hold=(key,down)=>{sfx.init();btnDown.current={...btnDown.current,[key]:down}};
   const tap=(key)=>{sfx.init();btnTap.current={...btnTap.current,[key]:true}};
 
-  const Btn=({label,k,color="#fff",sz=56,round=false})=>(
+  const Btn=({label,k,color="#fff",sz=56,round=true})=>(
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();hold(k,true)}}
       onTouchEnd={e=>{e.preventDefault();e.stopPropagation();hold(k,false)}}
@@ -598,14 +595,14 @@ function Game(){
       onMouseDown={()=>hold(k,true)}
       onMouseUp={()=>hold(k,false)}
       onMouseLeave={()=>hold(k,false)}
-      style={{width:sz,height:sz,borderRadius:round?"50%":14,border:`2.5px solid ${color}66`,background:"rgba(0,0,0,0.5)",color,fontFamily:PF,fontSize:sz>50?11:9,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",textShadow:`0 0 6px ${color}`}}
+      style={{width:sz,height:sz,borderRadius:"50%",border:`2px solid ${color}55`,background:"rgba(20,20,30,0.65)",color,fontFamily:"sans-serif",fontSize:sz*0.38,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",boxShadow:`inset 0 0 ${sz/4}px ${color}15, 0 2px 8px rgba(0,0,0,0.4)`}}
     >{label}</button>
   );
-  const TapBtn=({label,k,color="#fff",sz=56,round=false})=>(
+  const TapBtn=({label,k,color="#fff",sz=56})=>(
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();tap(k)}}
       onMouseDown={()=>tap(k)}
-      style={{width:sz,height:sz,borderRadius:round?"50%":14,border:`2.5px solid ${color}66`,background:`${color}18`,color,fontFamily:PF,fontSize:sz>50?11:9,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",textShadow:`0 0 6px ${color}`}}
+      style={{width:sz,height:sz,borderRadius:"50%",border:`2px solid ${color}55`,background:`rgba(20,20,30,0.65)`,color,fontFamily:"sans-serif",fontSize:sz*0.38,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",boxShadow:`inset 0 0 ${sz/4}px ${color}20, 0 2px 8px rgba(0,0,0,0.4)`}}
     >{label}</button>
   );
 
@@ -656,24 +653,34 @@ function Game(){
           <div className="fight-wrap" onTouchStart={()=>sfx.init()}>
             <canvas ref={cvR} width={W} height={H}/>
           </div>
-          {/* LEFT: Movement - Jump on top, Left/Block/Right on bottom */}
-          <div className="dpad">
-            <Btn label="JUMP" k={mk.u} color={mc} sz={60} round/>
-            <div className="dpad-row">
-              <Btn label="◄" k={mk.l} color={mc} sz={56} round/>
-              <Btn label="⊘" k={mk.d} color="#aaa" sz={50} round/>
-              <Btn label="►" k={mk.r} color={mc} sz={56} round/>
+          {/* LEFT: D-pad cross with circular backing */}
+          <div className="dpad" style={{position:"fixed",bottom:10,left:10,zIndex:20}}>
+            <div style={{position:"relative",width:140,height:140}}>
+              {/* Background circle */}
+              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(10,10,20,0.35)",border:"1px solid rgba(255,255,255,0.08)"}}/>
+              {/* Up */}
+              <div style={{position:"absolute",top:0,left:45}}><Btn label="▲" k={mk.u} color={mc} sz={50}/></div>
+              {/* Left */}
+              <div style={{position:"absolute",top:45,left:0}}><Btn label="◀" k={mk.l} color={mc} sz={50}/></div>
+              {/* Block center */}
+              <div style={{position:"absolute",top:47,left:47}}><Btn label="🛡" k={mk.d} color="#8899aa" sz={46}/></div>
+              {/* Right */}
+              <div style={{position:"absolute",top:45,right:0}}><Btn label="▶" k={mk.r} color={mc} sz={50}/></div>
             </div>
           </div>
-          {/* RIGHT: Attacks - Big PNC/KCK on top, SPL/★ below */}
-          <div className="atk-area">
-            <div className="atk-top">
-              <Btn label="PNC" k={mk.p} color="#ff6644" sz={58} round/>
-              <Btn label="KCK" k={mk.k} color="#44aaff" sz={58} round/>
-            </div>
-            <div className="atk-bot">
-              <Btn label="SPL" k={mk.s} color={mc} sz={50} round/>
-              <TapBtn label="★" k={mk.su} color="#ff8844" sz={50} round/>
+          {/* RIGHT: PS5 diamond - Kick top, Punch left, Special right, Super bottom */}
+          <div className="atk-area" style={{position:"fixed",bottom:10,right:10,zIndex:20}}>
+            <div style={{position:"relative",width:140,height:140}}>
+              {/* Background circle */}
+              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(10,10,20,0.35)",border:"1px solid rgba(255,255,255,0.08)"}}/>
+              {/* Top - Kick (△ style) */}
+              <div style={{position:"absolute",top:0,left:45}}><Btn label="🦶" k={mk.k} color="#44aaff" sz={50}/></div>
+              {/* Left - Punch (□ style) */}
+              <div style={{position:"absolute",top:45,left:0}}><Btn label="👊" k={mk.p} color="#ff6644" sz={50}/></div>
+              {/* Right - Special (○ style) */}
+              <div style={{position:"absolute",top:45,right:0}}><Btn label="💥" k={mk.s} color={mc} sz={50}/></div>
+              {/* Bottom - Super (✕ style) */}
+              <div style={{position:"absolute",bottom:0,left:45}}><TapBtn label="⚡" k={mk.su} color="#ff8844" sz={50}/></div>
             </div>
           </div>
         </>
