@@ -330,10 +330,19 @@ function Game(){
         // Announcement timer
         if(g.annTimer>0){
           g.annTimer--;
-          if(g.annTimer===0&&g.ann==="ROUND 1"||g.ann==="ROUND 2"||g.ann==="FINAL ROUND"){
+          if(g.annTimer===0&&(g.ann==="ROUND 1"||g.ann==="ROUND 2"||g.ann==="FINAL ROUND")){
             g.ann="FIGHT!";g.annTimer=60;g.snd.push("fight");
           }else if(g.annTimer===0&&g.ann==="FIGHT!"){
             g.ann="";
+          }
+        }
+
+        // Gameover rematch check
+        if(g.state==="gameover"&&g.canRematch){
+          const anyTap=Object.keys(tap).length>0||Object.keys(remoteIn.current.tap||{}).length>0;
+          if(anyTap){
+            const ng=newGame();ng.snd.push("roundStart");
+            G.current=ng;g=G.current;
           }
         }
 
@@ -445,7 +454,7 @@ function Game(){
 
         // Send state to client
         sendCtr++;
-        if(connR.current?.open&&sendCtr%2===0){
+        if(connR.current?.open&&sendCtr%3===0){
           try{connR.current.send(serialize())}catch(e){}
         }
         g.snd=[];
@@ -472,14 +481,15 @@ function Game(){
       // YOU indicator
       ctx.fillStyle=myRole==="p1"?"#e8a926":"#c0392b";ctx.font=`bold 9px ${PF}`;ctx.textAlign="center";
       ctx.fillText(myRole==="p1"?"← YOU":"YOU →",myRole==="p1"?160:640,H-8);
-      // Debug
-      ctx.fillStyle="#0f0";ctx.font=`7px ${PF}`;ctx.textAlign="left";
-      ctx.fillText(`F${fr} ${g.state} ${host?"HOST":"CLIENT"} T${g.timer}`,4,H-2);
       // Announcement overlay
       if(g.ann){
         ctx.fillStyle="rgba(0,0,0,0.6)";ctx.fillRect(0,H/2-40,W,80);
         ctx.fillStyle="#fff";ctx.font=`bold 28px ${PF}`;ctx.textAlign="center";
         ctx.fillText(g.ann,W/2,H/2+8);
+        if(g.state==="gameover"&&g.canRematch&&Math.sin(fr*.08)>0){
+          ctx.fillStyle="#e8a926";ctx.font=`9px ${PF}`;
+          ctx.fillText("TAP ANY BUTTON FOR REMATCH",W/2,H/2+35);
+        }
       }
       ctx.restore();
       aid=requestAnimationFrame(loop);
@@ -493,6 +503,8 @@ function Game(){
         if(nw.p1>=2||nw.p2>=2){
           g.ann=`${nw.p1>=2?CHARS.gandhi.name:CHARS.binladen.name} WINS!`;
           g.state="gameover";g.annTimer=9999;g.snd.push("win");
+          // After 3s, allow rematch
+          setTimeout(()=>{g.canRematch=true},3000);
         }else{
           const nr=g.round+1;
           const ng=newGame();ng.round=nr;ng.wins=nw;
