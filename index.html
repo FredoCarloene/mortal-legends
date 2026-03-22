@@ -464,7 +464,7 @@ function FightingGame(){
     const ks={},jp={};
     const dn=e=>{if(e.target.tagName==="INPUT")return;const k=e.key===" "?" ":e.key.length===1?e.key.toLowerCase():e.key;if(!ks[k])jp[k]=true;ks[k]=true;const kl=e.key.toLowerCase();if(["arrowup","arrowdown","arrowleft","arrowright"," "].includes(kl)||"wasdfghjklt".includes(kl)||e.key===";")e.preventDefault()};
     const up=e=>{const k=e.key===" "?" ":e.key.length===1?e.key.toLowerCase():e.key;ks[k]=false};
-    const fl=setInterval(()=>{const mc=mcR.current,mt=mtR.current,h={...ks};for(const k in mc)if(mc[k])h[k]=true;locIn.current={h,j:{...jp,...mt}};for(const k in jp)delete jp[k];mtR.current={}},16);
+    const fl=setInterval(()=>{const mc=mcR.current,mt=mtR.current,h={...ks};for(const k in mc)if(mc[k])h[k]=true;const j={...jp,...mt};locIn.current={h,j};if(Object.keys(mt).length>0)mtR.current={};for(const k in jp)delete jp[k]},16);
     window.addEventListener("keydown",dn);window.addEventListener("keyup",up);
     return()=>{window.removeEventListener("keydown",dn);window.removeEventListener("keyup",up);clearInterval(fl)};
   },[]);
@@ -535,6 +535,7 @@ function FightingGame(){
           if(!rdE.current){for(const p of[g.p1,g.p2])if(p.health<=0){p.health=0;hRE(p===g.p1?"p2":"p1");break}}
           if(fr%120===0)g.sfx.push("bgDrone");
         }
+        // These run for ALL active states (countdown, fighting, ko, gameover)
         g.hitEffects=g.hitEffects.map(e=>({...e,frame:e.frame+1})).filter(e=>e.frame<20);
         if(g.shakeFrames>0)g.shakeFrames--;if(g.slowMotion>0)g.slowMotion--;
         g.sfx.forEach(s=>{if(sfx[s])sfx[s]()});
@@ -559,10 +560,11 @@ function FightingGame(){
       for(let i=0;i<2;i++){ctx.fillStyle=i<wn.p1?"#e8a926":"#333";ctx.beginPath();ctx.arc(330+i*15,59,4,0,Math.PI*2);ctx.fill()}
       for(let i=0;i<2;i++){ctx.fillStyle=i<wn.p2?"#c0392b":"#333";ctx.beginPath();ctx.arc(455+i*15,59,4,0,Math.PI*2);ctx.fill()}
       ctx.fillStyle=myR==="p1"?"#e8a926":"#c0392b";ctx.font=`bold 8px ${PF}`;ctx.textAlign="center";ctx.fillText(myR==="p1"?"← YOU":"YOU →",myR==="p1"?160:640,STAGE_H-8);
+      ctx.fillStyle="#0f0";ctx.font=`7px ${PF}`;ctx.textAlign="left";ctx.fillText(`F:${fr} S:${gs} R:${isH?"HOST":"CLIENT"}`,5,STAGE_H-2);
       if(ann){ctx.fillStyle="rgba(0,0,0,0.55)";ctx.fillRect(0,STAGE_H/2-50,STAGE_W,100);ctx.shadowColor="#ff4444";ctx.shadowBlur=15;ctx.fillStyle="#fff";ctx.font=`bold 32px ${PF}`;ctx.textAlign="center";ctx.fillText(ann,STAGE_W/2,STAGE_H/2+10);ctx.shadowBlur=0;if(gs==="gameover"&&Math.sin(fr*.08)>0){ctx.fillStyle="#e8a926";ctx.font=`10px ${PF}`;ctx.fillText(isH?"TAP REMATCH":"WAITING FOR HOST...",STAGE_W/2,STAGE_H/2+50)}}
       ctx.restore();aid=requestAnimationFrame(loop);
     };
-    if(screen==="fighting")aid=requestAnimationFrame(loop);
+    if(screen==="fighting"){console.log("Game loop starting, role:",roleR.current,"gsR:",gsR.current);aid=requestAnimationFrame(loop)}
     return()=>cancelAnimationFrame(aid);
   },[screen,playerRole,hAtk,hRE,ser]);
 
