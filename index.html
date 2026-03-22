@@ -338,8 +338,8 @@ function Game(){
 
         // Gameover rematch check
         if(g.state==="gameover"&&g.canRematch){
-          const anyTap=Object.keys(tap).length>0||Object.keys(remoteIn.current.tap||{}).length>0;
-          if(anyTap){
+          const anyInput=Object.values(held).some(v=>v)||Object.keys(tap).length>0||Object.values(remoteIn.current.held||{}).some(v=>v)||Object.keys(remoteIn.current.tap||{}).length>0;
+          if(anyInput){
             const ng=newGame();ng.snd.push("roundStart");
             G.current=ng;g=G.current;
           }
