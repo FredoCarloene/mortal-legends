@@ -487,7 +487,7 @@ function Game(){
 
         // Send state to client
         sendCtr++;
-        if(connR.current?.open&&sendCtr%6===0){
+        if(connR.current?.open&&sendCtr%3===0){
           try{connR.current.send(serialize())}catch(e){}
         }
         g.snd=[];
@@ -495,20 +495,23 @@ function Game(){
 
       // ─── CLIENT INTERPOLATION ───
       if(!host&&snapA.current&&snapB.current){
-        snapTime.current=Math.min(1,snapTime.current+1/6);
+        snapTime.current=Math.min(1,snapTime.current+1/3);
         const t=snapTime.current;
         const lerp=(a,b)=>a+(b-a)*t;
         const A=snapA.current,B=snapB.current;
-        // Lerp continuous values
+        // Lerp positions smoothly
         g.p1.x=lerp(A.p1.x,B.p1.x);g.p1.y=lerp(A.p1.y,B.p1.y);
         g.p2.x=lerp(A.p2.x,B.p2.x);g.p2.y=lerp(A.p2.y,B.p2.y);
-        g.p1.health=lerp(A.p1.health,B.p1.health);g.p2.health=lerp(A.p2.health,B.p2.health);
-        g.p1.special=lerp(A.p1.special,B.p1.special);g.p2.special=lerp(A.p2.special,B.p2.special);
-        // Snap discrete states from latest
+        // Snap health and special immediately for responsive combat feel
+        g.p1.health=B.p1.health;g.p2.health=B.p2.health;
+        g.p1.special=B.p1.special;g.p2.special=B.p2.special;
+        // Snap discrete states
         g.p1.action=B.p1.action;g.p1.facing=B.p1.facing;g.p1.isBlocking=B.p1.isBlocking;
         g.p1.superReady=B.p1.superReady;g.p1.superActive=B.p1.superActive;g.p1.superBoomerangs=B.p1.superBoomerangs;
+        g.p1.hitStun=B.p1.hitStun;g.p1.actionTimer=B.p1.actionTimer;
         g.p2.action=B.p2.action;g.p2.facing=B.p2.facing;g.p2.isBlocking=B.p2.isBlocking;
         g.p2.superReady=B.p2.superReady;g.p2.superActive=B.p2.superActive;g.p2.superBullets=B.p2.superBullets;
+        g.p2.hitStun=B.p2.hitStun;g.p2.actionTimer=B.p2.actionTimer;
         g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
       }else if(!host&&snapB.current&&!snapA.current){
         const B=snapB.current;
