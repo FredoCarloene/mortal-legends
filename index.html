@@ -34,7 +34,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
 const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99;
-const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:2,kd:4,sd:12,sp:3.8,br:0.85},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:4,sd:12,sp:3.8,br:0.85}};
+const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:2,kd:4,sd:12,sp:3.8,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:4,sd:12,sp:3.8,br:0.75}};
 const PF="'Press Start 2P',monospace";
 
 // SFX
@@ -232,7 +232,7 @@ function Game(){
     const g=G.current,p1=g.p1,p2=g.p2;
     // Compact: use arrays instead of objects to minimize JSON size
     // Player: [x,y,vy,health,special,action,actionTimer,facing,jumping,blocking,hitStun,superReady,superActive,superBullets,superBoomerangs,superUsed,dd,combo,comboTimer]
-    const P=(p)=>[p.x|0,p.y|0,p.vy|0,Math.round(p.health),Math.round(p.special),p.action||0,p.actionTimer,p.facing,p.isJumping?1:0,p.isBlocking?1:0,p.hitStun,p.superReady?1:0,p.superActive?1:0,p.superBullets,p.superBoomerangs,p.superUsed?1:0,p.dd|0,p.combo,p.comboTimer];
+    const P=(p)=>[p.x|0,p.y|0,p.vy|0,+(p.health.toFixed(1)),Math.round(p.special),p.action||0,p.actionTimer,p.facing,p.isJumping?1:0,p.isBlocking?1:0,p.hitStun,p.superReady?1:0,p.superActive?1:0,p.superBullets,p.superBoomerangs,p.superUsed?1:0,p.dd|0,p.combo,p.comboTimer];
     return{t:"s",a:P(p1),b:P(p2),
       p:g.projectiles.length>0?g.projectiles.map(p=>[p.type==="boomerang"?1:2,p.x|0,p.y|0,p.dir,p.phase==="out"?1:0,p.rotation|0,p.age,p.hit?1:0,p.owner==="p1"?1:2]):[],
       f:g.fx.length>0?g.fx.slice(0,3).map(e=>[e.x|0,e.y|0,e.f,e.t==="special"?1:0]):[],
@@ -541,9 +541,11 @@ function Game(){
       // Win dots
       for(let i=0;i<2;i++){ctx.fillStyle=i<g.wins.p1?"#e8a926":"#333";ctx.beginPath();ctx.arc(330+i*15,59,4,0,Math.PI*2);ctx.fill()}
       for(let i=0;i<2;i++){ctx.fillStyle=i<g.wins.p2?"#c0392b":"#333";ctx.beginPath();ctx.arc(455+i*15,59,4,0,Math.PI*2);ctx.fill()}
-      // YOU indicator
-      ctx.fillStyle=myRole==="p1"?"#e8a926":"#c0392b";ctx.font=`bold 9px ${PF}`;ctx.textAlign="center";
-      ctx.fillText(myRole==="p1"?"← YOU":"YOU →",myRole==="p1"?160:640,H-8);
+      // YOU indicator at bottom center
+      const youTxt=myRole==="p1"?"← YOU: GANDHI":"YOU: BIN LADEN →";
+      ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fillRect(W/2-100,H-18,200,16);
+      ctx.fillStyle=myRole==="p1"?"#e8a926":"#c0392b";ctx.font=`bold 8px ${PF}`;ctx.textAlign="center";
+      ctx.fillText(youTxt,W/2,H-7);
       // Announcement overlay
       if(g.ann){
         ctx.fillStyle="rgba(0,0,0,0.6)";ctx.fillRect(0,H/2-40,W,80);
