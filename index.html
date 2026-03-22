@@ -173,6 +173,10 @@ function Game(){
 
   // Remote player input (received via WebRTC)
   const remoteIn=useRef({held:{},tap:{}});
+  // Client interpolation buffer: two snapshots to lerp between
+  const snapA=useRef(null); // older snapshot
+  const snapB=useRef(null); // newer snapshot  
+  const snapTime=useRef(0); // time since last snapshot (0-1 lerp factor)
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const c=p.get("room");if(c&&c.length===4)setJoinCode(c)},[]);
@@ -183,14 +187,17 @@ function Game(){
       // Host receives P2 inputs
       remoteIn.current={held:d.h||{},tap:d.tp||{}};
     }else if(!isHost.current&&d.t==="s"){
-      // Client receives full game state from host
+      // Client: push into interpolation buffer
+      snapA.current=snapB.current;
+      snapB.current=d;
+      snapTime.current=0;
+      // Apply non-interpolatable state immediately
       const g=G.current;
-      const ap=(t,s)=>{t.x=s.x;t.y=s.y;t.vy=s.v;t.health=s.h;t.special=s.sp;t.action=s.a;t.actionTimer=s.at;t.facing=s.f;t.isJumping=s.j;t.isBlocking=s.b;t.hitStun=s.hs;t.superReady=s.sr;t.superActive=s.sa;t.superBullets=s.sb;t.superBoomerangs=s.sm;t.superUsed=s.su;t.dd=s.dd;t.combo=s.c;t.comboTimer=s.ct};
-      ap(g.p1,d.p1);ap(g.p2,d.p2);
-      g.projectiles=(d.pr||[]).map(p=>({type:p.t,x:p.x,y:p.y,dir:p.d,phase:p.ph,rotation:p.r||0,age:p.a,hit:p.h,owner:p.o}));
-      g.fx=(d.fx||[]).map(e=>({x:e.x,y:e.y,f:e.f,t:e.t}));
-      g.shake=d.sk||0;g.state=d.gs;g.ann=d.an||"";g.annTimer=d.at||0;
+      g.state=d.gs;g.ann=d.an||"";g.annTimer=d.at||0;
       g.round=d.rd;g.wins=d.w;g.timer=d.tm;g.canRematch=d.cm||false;
+      g.shake=d.sk||0;
+      g.fx=(d.fx||[]).map(e=>({x:e.x,y:e.y,f:e.f,t:e.t}));
+      g.projectiles=(d.pr||[]).map(p=>({type:p.t,x:p.x,y:p.y,dir:p.d,phase:p.ph,rotation:p.r||0,age:p.a,hit:p.h,owner:p.o}));
       // Play sounds
       if(d.sn)d.sn.forEach(s=>{if(sfx[s])sfx[s]()});
     }
@@ -453,10 +460,39 @@ function Game(){
 
         // Send state to client
         sendCtr++;
-        if(connR.current?.open&&sendCtr%2===0){
+        if(connR.current?.open&&sendCtr%6===0){
           try{connR.current.send(serialize())}catch(e){}
         }
         g.snd=[];
+      }
+
+      // ─── CLIENT INTERPOLATION ───
+      if(!host&&snapA.current&&snapB.current){
+        // Lerp factor: 0→1 over 6 frames (100ms at 60fps)
+        snapTime.current=Math.min(1,snapTime.current+1/6);
+        const t=snapTime.current;
+        const lerp=(a,b)=>a+(b-a)*t;
+        const A=snapA.current,B=snapB.current;
+        g.p1.x=lerp(A.p1.x,B.p1.x);g.p1.y=lerp(A.p1.y,B.p1.y);
+        g.p2.x=lerp(A.p2.x,B.p2.x);g.p2.y=lerp(A.p2.y,B.p2.y);
+        g.p1.health=lerp(A.p1.h,B.p1.h);g.p2.health=lerp(A.p2.h,B.p2.h);
+        g.p1.special=lerp(A.p1.sp,B.p1.sp);g.p2.special=lerp(A.p2.sp,B.p2.sp);
+        // Snap discrete states from latest
+        g.p1.action=B.p1.a;g.p1.facing=B.p1.f;g.p1.isBlocking=B.p1.b;
+        g.p1.superReady=B.p1.sr;g.p1.superActive=B.p1.sa;g.p1.superBoomerangs=B.p1.sm;
+        g.p2.action=B.p2.a;g.p2.facing=B.p2.f;g.p2.isBlocking=B.p2.b;
+        g.p2.superReady=B.p2.sr;g.p2.superActive=B.p2.sa;g.p2.superBullets=B.p2.sb;
+        // Update effects locally
+        g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
+      }else if(!host&&snapB.current&&!snapA.current){
+        // Only one snapshot so far, apply directly
+        const B=snapB.current;
+        g.p1.x=B.p1.x;g.p1.y=B.p1.y;g.p2.x=B.p2.x;g.p2.y=B.p2.y;
+        g.p1.health=B.p1.h;g.p2.health=B.p2.h;g.p1.special=B.p1.sp;g.p2.special=B.p2.sp;
+        g.p1.action=B.p1.a;g.p1.facing=B.p1.f;g.p1.isBlocking=B.p1.b;
+        g.p1.superReady=B.p1.sr;g.p1.superActive=B.p1.sa;g.p1.superBoomerangs=B.p1.sm;
+        g.p2.action=B.p2.a;g.p2.facing=B.p2.f;g.p2.isBlocking=B.p2.b;
+        g.p2.superReady=B.p2.sr;g.p2.superActive=B.p2.sa;g.p2.superBullets=B.p2.sb;
       }
 
       // ─── RENDER (both host & client) ───
