@@ -11,8 +11,24 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;overflow-x:hidden;-webkit-user-select:none;user-select:none}
+body{background:#000;overflow:hidden;-webkit-user-select:none;user-select:none}
 button{touch-action:manipulation}
+#root{width:100%;height:100%}
+.fight-wrap{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;display:flex;align-items:center;justify-content:center}
+.fight-wrap canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}
+.ctrl-layer{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+.ctrl-layer button{pointer-events:auto}
+.dpad{position:absolute;bottom:12px;left:12px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.dpad-row{display:flex;gap:2px}
+.atk-grid{position:absolute;bottom:12px;right:12px;display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.you-label{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:bold;z-index:11}
+@media(orientation:portrait){
+  .rotate-msg{display:flex!important}
+  .fight-wrap canvas,.ctrl-layer{display:none!important}
+}
+@media(orientation:landscape){
+  .rotate-msg{display:none!important}
+}
 </style>
 </head>
 <body>
@@ -566,14 +582,14 @@ function Game(){
       onMouseDown={()=>hold(k,true)}
       onMouseUp={()=>hold(k,false)}
       onMouseLeave={()=>hold(k,false)}
-      style={{width:sz,height:sz,borderRadius:10,border:`2px solid ${color}`,background:"rgba(0,0,0,0.8)",color,fontFamily:PF,fontSize:10,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
+      style={{width:sz,height:sz,borderRadius:12,border:`2px solid ${color}88`,background:"rgba(0,0,0,0.45)",color,fontFamily:PF,fontSize:10,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",opacity:0.85}}
     >{label}</button>
   );
   const TapBtn=({label,k,color="#fff",sz=50})=>(
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();tap(k)}}
       onMouseDown={()=>tap(k)}
-      style={{width:sz,height:sz,borderRadius:10,border:`2px solid ${color}`,background:`${color}22`,color,fontFamily:PF,fontSize:10,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
+      style={{width:sz,height:sz,borderRadius:12,border:`2px solid ${color}88`,background:`${color}15`,color,fontFamily:PF,fontSize:10,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",opacity:0.85}}
     >{label}</button>
   );
 
@@ -615,28 +631,36 @@ function Game(){
     </div>}
 
     {screen==="fight"&&<>
-      <div style={{border:`3px solid ${mc}`,borderRadius:6,padding:2,background:"#111",maxWidth:"100%",overflow:"hidden"}}>
-        <canvas ref={cvR} width={W} height={H} style={{display:"block",maxWidth:"100%",height:"auto",imageRendering:"pixelated"}}/>
-      </div>
-      {isMobile&&<div style={{width:"100%",maxWidth:W,marginTop:8,padding:"0 4px"}}>
-        <div style={{color:mc,fontSize:8,textAlign:"center",marginBottom:4}}>YOU: {mn}</div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-            <Btn label="▲" k={mk.u} color={mc}/>
-            <div style={{display:"flex",gap:2}}>
-              <Btn label="◄" k={mk.l} color={mc}/>
-              <Btn label="BLK" k={mk.d} color="#888"/>
-              <Btn label="►" k={mk.r} color={mc}/>
+      {isMobile?
+        <div className="fight-wrap">
+          <div className="rotate-msg" style={{display:"none",position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"#000",alignItems:"center",justifyContent:"center",flexDirection:"column",zIndex:99,fontFamily:PF,color:"#e8a926",fontSize:11,textAlign:"center",padding:20}}>
+            <div style={{fontSize:28,marginBottom:16}}>↻</div>
+            ROTATE YOUR PHONE<br/><span style={{color:"#888",fontSize:8,marginTop:8,display:"block"}}>Landscape mode required</span>
+          </div>
+          <canvas ref={cvR} width={W} height={H}/>
+          <div className="ctrl-layer">
+            <div className="you-label" style={{color:mc,fontFamily:PF}}>YOU: {mn}</div>
+            <div className="dpad">
+              <Btn label="▲" k={mk.u} color={mc} sz={46}/>
+              <div className="dpad-row">
+                <Btn label="◄" k={mk.l} color={mc} sz={46}/>
+                <Btn label="BLK" k={mk.d} color="#888" sz={46}/>
+                <Btn label="►" k={mk.r} color={mc} sz={46}/>
+              </div>
+            </div>
+            <div className="atk-grid">
+              <Btn label="PNC" k={mk.p} color="#ff6644" sz={52}/>
+              <Btn label="KCK" k={mk.k} color="#44aaff" sz={52}/>
+              <Btn label="SPL" k={mk.s} color={mc} sz={52}/>
+              <TapBtn label="★" k={mk.su} color="#ff8844" sz={52}/>
             </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3}}>
-            <Btn label="PNC" k={mk.p} color="#ff6644" sz={56}/>
-            <Btn label="KCK" k={mk.k} color="#44aaff" sz={56}/>
-            <Btn label="SPL" k={mk.s} color={mc} sz={56}/>
-            <TapBtn label="★" k={mk.su} color="#ff8844" sz={56}/>
-          </div>
         </div>
-      </div>}
+      :
+        <div style={{border:`3px solid ${mc}`,borderRadius:6,padding:2,background:"#111",maxWidth:"100%",overflow:"hidden"}}>
+          <canvas ref={cvR} width={W} height={H} style={{display:"block",maxWidth:"100%",height:"auto",imageRendering:"pixelated"}}/>
+        </div>
+      }
     </>}
 
     {screen==="dc"&&<div style={{textAlign:"center",padding:16}}>
