@@ -190,7 +190,7 @@ function Game(){
       g.projectiles=(d.pr||[]).map(p=>({type:p.t,x:p.x,y:p.y,dir:p.d,phase:p.ph,rotation:p.r||0,age:p.a,hit:p.h,owner:p.o}));
       g.fx=(d.fx||[]).map(e=>({x:e.x,y:e.y,f:e.f,t:e.t}));
       g.shake=d.sk||0;g.state=d.gs;g.ann=d.an||"";g.annTimer=d.at||0;
-      g.round=d.rd;g.wins=d.w;g.timer=d.tm;
+      g.round=d.rd;g.wins=d.w;g.timer=d.tm;g.canRematch=d.cm||false;
       // Play sounds
       if(d.sn)d.sn.forEach(s=>{if(sfx[s])sfx[s]()});
     }
@@ -198,13 +198,12 @@ function Game(){
 
   const serialize=useCallback(()=>{
     const g=G.current;
-    const sp=p=>({x:+p.x.toFixed(1),y:+p.y.toFixed(1),v:+p.vy.toFixed(1),h:+p.health.toFixed(1),sp:+p.special.toFixed(1),a:p.action,at:p.actionTimer,f:p.facing,j:p.isJumping,b:p.isBlocking,hs:p.hitStun,sr:p.superReady,sa:p.superActive,sb:p.superBullets,sm:p.superBoomerangs,su:p.superUsed,dd:+p.dd.toFixed(1),c:p.combo,ct:p.comboTimer});
-    const r={t:"s",p1:sp(g.p1),p2:sp(g.p2),
-      pr:g.projectiles.map(p=>({t:p.type,x:Math.round(p.x),y:Math.round(p.y),d:p.dir,ph:p.phase,r:+((p.rotation||0).toFixed(2)),a:p.age,h:p.hit,o:p.owner})),
-      fx:g.fx.slice(0,5).map(e=>({x:Math.round(e.x),y:Math.round(e.y),f:e.f,t:e.t})),
-      sk:g.shake,gs:g.state,an:g.ann,at:g.annTimer,rd:g.round,w:g.wins,tm:g.timer,
+    const sp=p=>({x:p.x|0,y:p.y|0,v:p.vy|0,h:Math.round(p.health),sp:Math.round(p.special),a:p.action,at:p.actionTimer,f:p.facing,j:p.isJumping,b:p.isBlocking,hs:p.hitStun,sr:p.superReady,sa:p.superActive,sb:p.superBullets,sm:p.superBoomerangs,su:p.superUsed,dd:p.dd|0,c:p.combo,ct:p.comboTimer});
+    return{t:"s",p1:sp(g.p1),p2:sp(g.p2),
+      pr:g.projectiles.map(p=>({t:p.type,x:p.x|0,y:p.y|0,d:p.dir,ph:p.phase,r:p.rotation|0,a:p.age,h:p.hit,o:p.owner})),
+      fx:g.fx.length>0?g.fx.slice(0,3).map(e=>({x:e.x|0,y:e.y|0,f:e.f,t:e.t})):[],
+      sk:g.shake,gs:g.state,an:g.ann,at:g.annTimer,rd:g.round,w:g.wins,tm:g.timer,cm:g.canRematch||false,
       sn:g.snd.splice(0)};
-    return r;
   },[]);
 
   const setupConn=useCallback((conn,asHost)=>{
@@ -300,7 +299,7 @@ function Game(){
 
     const loop=()=>{
       const fr=frameR.current++;
-      const g=G.current;
+      let g=G.current;
       const host=isHost.current;
       const myRole=role;
 
@@ -454,7 +453,7 @@ function Game(){
 
         // Send state to client
         sendCtr++;
-        if(connR.current?.open&&sendCtr%3===0){
+        if(connR.current?.open&&sendCtr%2===0){
           try{connR.current.send(serialize())}catch(e){}
         }
         g.snd=[];
