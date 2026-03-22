@@ -14,8 +14,8 @@
 html,body{background:#000;overflow:hidden;-webkit-user-select:none;user-select:none;height:100%;width:100%;position:fixed;top:0;left:0}
 button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #root{width:100%;height:100%}
-.fight-wrap{position:fixed;top:0;left:0;width:100%;height:100%;background:#000}
-.fight-wrap canvas{display:block;width:100%;height:100%;object-fit:cover}
+.fight-wrap{position:fixed;top:0;left:0;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center}
+.fight-wrap canvas{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
 .ctrl-layer{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
 .ctrl-layer button{pointer-events:auto}
 .dpad{position:fixed;bottom:max(8px,env(safe-area-inset-bottom));left:max(8px,env(safe-area-inset-left));display:flex;flex-direction:column;align-items:center;gap:2px;z-index:20}
@@ -41,7 +41,15 @@ const PF="'Press Start 2P',monospace";
 const AC=window.AudioContext||window.webkitAudioContext;
 class Sfx{
   constructor(){this.c=null;this.g=null;this.m=false}
-  init(){if(this.c){if(this.c.state==="suspended")this.c.resume();return}try{this.c=new AC();this.g=this.c.createGain();this.g.gain.value=0.35;this.g.connect(this.c.destination)}catch(e){}}
+  init(){
+    if(this.c&&this.c.state==="running")return;
+    if(this.c&&this.c.state==="suspended"){this.c.resume();return}
+    try{
+      this.c=new AC();this.g=this.c.createGain();this.g.gain.value=0.35;this.g.connect(this.c.destination);
+      // iOS Safari unlock: play a silent buffer
+      const b=this.c.createBuffer(1,1,22050);const s=this.c.createBufferSource();s.buffer=b;s.connect(this.c.destination);s.start(0);
+    }catch(e){}
+  }
   o(t,f,d,v=0.3){if(!this.c||this.m)return;const o=this.c.createOscillator(),g=this.c.createGain();o.type=t;o.frequency.value=f;g.gain.setValueAtTime(v,this.c.currentTime);g.gain.exponentialRampToValueAtTime(0.001,this.c.currentTime+d);o.connect(g);g.connect(this.g);o.start();o.stop(this.c.currentTime+d)}
   n(d,v=0.15){if(!this.c||this.m)return;const l=this.c.sampleRate*d,b=this.c.createBuffer(1,l,this.c.sampleRate),a=b.getChannelData(0);for(let i=0;i<l;i++)a[i]=Math.random()*2-1;const s=this.c.createBufferSource();s.buffer=b;const g=this.c.createGain();g.gain.setValueAtTime(v,this.c.currentTime);g.gain.exponentialRampToValueAtTime(0.001,this.c.currentTime+d);const f=this.c.createBiquadFilter();f.type="highpass";f.frequency.value=800;s.connect(f);f.connect(g);g.connect(this.g);s.start();s.stop(this.c.currentTime+d)}
   punch(){this.n(.08,.25);this.o("square",200,.06,.2)}
@@ -201,30 +209,35 @@ function Game(){
       // Host receives P2 inputs
       remoteIn.current={held:d.h||{},tap:d.tp||{}};
     }else if(!isHost.current&&d.t==="s"){
-      // Client: push into interpolation buffer
+      // Client: decode compact format
+      // Player array: [x,y,vy,health,special,action,actionTimer,facing,jumping,blocking,hitStun,superReady,superActive,superBullets,superBoomerangs,superUsed,dd,combo,comboTimer]
+      const dp=(a)=>({x:a[0],y:a[1],vy:a[2],health:a[3],special:a[4],action:a[5]||null,actionTimer:a[6],facing:a[7],isJumping:!!a[8],isBlocking:!!a[9],hitStun:a[10],superReady:!!a[11],superActive:!!a[12],superBullets:a[13],superBoomerangs:a[14],superUsed:!!a[15],dd:a[16],combo:a[17],comboTimer:a[18]});
+      const s1=dp(d.a),s2=dp(d.b);
+      // Push to interpolation buffer
       snapA.current=snapB.current;
-      snapB.current=d;
+      snapB.current={p1:s1,p2:s2};
       snapTime.current=0;
-      // Apply non-interpolatable state immediately
+      // Apply non-interpolatable state
       const g=G.current;
-      g.state=d.gs;g.ann=d.an||"";g.annTimer=d.at||0;
-      g.round=d.rd;g.wins=d.w;g.timer=d.tm;g.canRematch=d.cm||false;
-      g.shake=d.sk||0;
-      g.fx=(d.fx||[]).map(e=>({x:e.x,y:e.y,f:e.f,t:e.t}));
-      g.projectiles=(d.pr||[]).map(p=>({type:p.t,x:p.x,y:p.y,dir:p.d,phase:p.ph,rotation:p.r||0,age:p.a,hit:p.h,owner:p.o}));
-      // Play sounds
-      if(d.sn)d.sn.forEach(s=>{if(sfx[s])sfx[s]()});
+      g.state=d.s;g.ann=d.n||"";g.annTimer=d.nt||0;
+      g.round=d.r;g.wins=d.w;g.timer=d.m;g.canRematch=!!d.c;
+      g.shake=d.k||0;
+      g.projectiles=(d.p||[]).map(a=>({type:a[0]===1?"boomerang":"bullet",x:a[1],y:a[2],dir:a[3],phase:a[4]===1?"out":"back",rotation:a[5],age:a[6],hit:!!a[7],owner:a[8]===1?"p1":"p2"}));
+      g.fx=(d.f||[]).map(a=>({x:a[0],y:a[1],f:a[2],t:a[3]===1?"special":"normal"}));
+      if(d.x)d.x.forEach(s=>{if(sfx[s])sfx[s]()});
     }
   },[]);
 
   const serialize=useCallback(()=>{
-    const g=G.current;
-    const sp=p=>({x:p.x|0,y:p.y|0,v:p.vy|0,h:Math.round(p.health),sp:Math.round(p.special),a:p.action,at:p.actionTimer,f:p.facing,j:p.isJumping,b:p.isBlocking,hs:p.hitStun,sr:p.superReady,sa:p.superActive,sb:p.superBullets,sm:p.superBoomerangs,su:p.superUsed,dd:p.dd|0,c:p.combo,ct:p.comboTimer});
-    return{t:"s",p1:sp(g.p1),p2:sp(g.p2),
-      pr:g.projectiles.map(p=>({t:p.type,x:p.x|0,y:p.y|0,d:p.dir,ph:p.phase,r:p.rotation|0,a:p.age,h:p.hit,o:p.owner})),
-      fx:g.fx.length>0?g.fx.slice(0,3).map(e=>({x:e.x|0,y:e.y|0,f:e.f,t:e.t})):[],
-      sk:g.shake,gs:g.state,an:g.ann,at:g.annTimer,rd:g.round,w:g.wins,tm:g.timer,cm:g.canRematch||false,
-      sn:g.snd.splice(0)};
+    const g=G.current,p1=g.p1,p2=g.p2;
+    // Compact: use arrays instead of objects to minimize JSON size
+    // Player: [x,y,vy,health,special,action,actionTimer,facing,jumping,blocking,hitStun,superReady,superActive,superBullets,superBoomerangs,superUsed,dd,combo,comboTimer]
+    const P=(p)=>[p.x|0,p.y|0,p.vy|0,Math.round(p.health),Math.round(p.special),p.action||0,p.actionTimer,p.facing,p.isJumping?1:0,p.isBlocking?1:0,p.hitStun,p.superReady?1:0,p.superActive?1:0,p.superBullets,p.superBoomerangs,p.superUsed?1:0,p.dd|0,p.combo,p.comboTimer];
+    return{t:"s",a:P(p1),b:P(p2),
+      p:g.projectiles.length>0?g.projectiles.map(p=>[p.type==="boomerang"?1:2,p.x|0,p.y|0,p.dir,p.phase==="out"?1:0,p.rotation|0,p.age,p.hit?1:0,p.owner==="p1"?1:2]):[],
+      f:g.fx.length>0?g.fx.slice(0,3).map(e=>[e.x|0,e.y|0,e.f,e.t==="special"?1:0]):[],
+      k:g.shake,s:g.state,n:g.ann,nt:g.annTimer,r:g.round,w:g.wins,m:g.timer,c:g.canRematch?1:0,
+      x:g.snd.splice(0)};
   },[]);
 
   const setupConn=useCallback((conn,asHost)=>{
@@ -482,31 +495,29 @@ function Game(){
 
       // ─── CLIENT INTERPOLATION ───
       if(!host&&snapA.current&&snapB.current){
-        // Lerp factor: 0→1 over 6 frames (100ms at 60fps)
         snapTime.current=Math.min(1,snapTime.current+1/6);
         const t=snapTime.current;
         const lerp=(a,b)=>a+(b-a)*t;
         const A=snapA.current,B=snapB.current;
+        // Lerp continuous values
         g.p1.x=lerp(A.p1.x,B.p1.x);g.p1.y=lerp(A.p1.y,B.p1.y);
         g.p2.x=lerp(A.p2.x,B.p2.x);g.p2.y=lerp(A.p2.y,B.p2.y);
-        g.p1.health=lerp(A.p1.h,B.p1.h);g.p2.health=lerp(A.p2.h,B.p2.h);
-        g.p1.special=lerp(A.p1.sp,B.p1.sp);g.p2.special=lerp(A.p2.sp,B.p2.sp);
+        g.p1.health=lerp(A.p1.health,B.p1.health);g.p2.health=lerp(A.p2.health,B.p2.health);
+        g.p1.special=lerp(A.p1.special,B.p1.special);g.p2.special=lerp(A.p2.special,B.p2.special);
         // Snap discrete states from latest
-        g.p1.action=B.p1.a;g.p1.facing=B.p1.f;g.p1.isBlocking=B.p1.b;
-        g.p1.superReady=B.p1.sr;g.p1.superActive=B.p1.sa;g.p1.superBoomerangs=B.p1.sm;
-        g.p2.action=B.p2.a;g.p2.facing=B.p2.f;g.p2.isBlocking=B.p2.b;
-        g.p2.superReady=B.p2.sr;g.p2.superActive=B.p2.sa;g.p2.superBullets=B.p2.sb;
-        // Update effects locally
+        g.p1.action=B.p1.action;g.p1.facing=B.p1.facing;g.p1.isBlocking=B.p1.isBlocking;
+        g.p1.superReady=B.p1.superReady;g.p1.superActive=B.p1.superActive;g.p1.superBoomerangs=B.p1.superBoomerangs;
+        g.p2.action=B.p2.action;g.p2.facing=B.p2.facing;g.p2.isBlocking=B.p2.isBlocking;
+        g.p2.superReady=B.p2.superReady;g.p2.superActive=B.p2.superActive;g.p2.superBullets=B.p2.superBullets;
         g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
       }else if(!host&&snapB.current&&!snapA.current){
-        // Only one snapshot so far, apply directly
         const B=snapB.current;
         g.p1.x=B.p1.x;g.p1.y=B.p1.y;g.p2.x=B.p2.x;g.p2.y=B.p2.y;
-        g.p1.health=B.p1.h;g.p2.health=B.p2.h;g.p1.special=B.p1.sp;g.p2.special=B.p2.sp;
-        g.p1.action=B.p1.a;g.p1.facing=B.p1.f;g.p1.isBlocking=B.p1.b;
-        g.p1.superReady=B.p1.sr;g.p1.superActive=B.p1.sa;g.p1.superBoomerangs=B.p1.sm;
-        g.p2.action=B.p2.a;g.p2.facing=B.p2.f;g.p2.isBlocking=B.p2.b;
-        g.p2.superReady=B.p2.sr;g.p2.superActive=B.p2.sa;g.p2.superBullets=B.p2.sb;
+        g.p1.health=B.p1.health;g.p2.health=B.p2.health;g.p1.special=B.p1.special;g.p2.special=B.p2.special;
+        g.p1.action=B.p1.action;g.p1.facing=B.p1.facing;g.p1.isBlocking=B.p1.isBlocking;
+        g.p1.superReady=B.p1.superReady;g.p1.superActive=B.p1.superActive;g.p1.superBoomerangs=B.p1.superBoomerangs;
+        g.p2.action=B.p2.action;g.p2.facing=B.p2.facing;g.p2.isBlocking=B.p2.isBlocking;
+        g.p2.superReady=B.p2.superReady;g.p2.superActive=B.p2.superActive;g.p2.superBullets=B.p2.superBullets;
       }
 
       // ─── RENDER (both host & client) ───
