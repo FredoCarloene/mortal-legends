@@ -54,9 +54,25 @@ function exitFS(){
   }catch(e){}
 }
 function isFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement)}
-const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99;
+const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,INPUT_DELAY=3;
+const IB={L:1,R:2,U:4,D:8,P:16,K:32,S:64,SU:128};
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:3,kd:5,sd:14,sp:3.2,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:3,sd:10,sp:4.5,br:0.75}};
 const PF="'Press Start 2P',monospace";
+const hasBit=(mask,bit)=>(mask&bit)!==0;
+function hashGameState(g){
+  const vals=[
+    g.p1.x,g.p1.y,g.p1.vx,g.p1.vy,g.p1.health,g.p1.special,g.p1.hitStun,g.p1.combo,g.p1.superActive?1:0,g.p1.superBullets,g.p1.superBoomerangs,
+    g.p2.x,g.p2.y,g.p2.vx,g.p2.vy,g.p2.health,g.p2.special,g.p2.hitStun,g.p2.combo,g.p2.superActive?1:0,g.p2.superBullets,g.p2.superBoomerangs,
+    g.timer,g.round,g.wins.p1,g.wins.p2,g.projectiles.length,g.fx.length,g.state==="fighting"?1:g.state==="ko"?2:g.state==="gameover"?3:0
+  ];
+  let h=2166136261>>>0;
+  for(const v of vals){
+    const n=Math.round(Number(v||0)*100);
+    h^=n>>>0;
+    h=Math.imul(h,16777619)>>>0;
+  }
+  return h>>>0;
+}
 
 // SFX
 const AC=window.AudioContext||window.webkitAudioContext;
@@ -218,13 +234,17 @@ function Game(){
   const[copied,setCopied]=useState(false);
   const[isFS,setIsFS]=useState(false);
   const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(/Macintosh/.test(navigator.userAgent)&&"ontouchend"in document);
-  const[tick,setTick]=useState(0); // force re-render
 
   // Refs for game state (no React re-renders during gameplay)
   const connR=useRef(null);
   const peerR=useRef(null);
-  const isHost=useRef(false);
   const frameR=useRef(0);
+  const simFrameR=useRef(0);
+  const inputFrameR=useRef(0);
+  const inputBufR=useRef({p1:new Map(),p2:new Map()});
+  const hashR=useRef({local:new Map(),remote:new Map()});
+  const clockR=useRef({last:0,acc:0});
+  const desyncR=useRef("");
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const c=p.get("room");if(c&&c.length===4)setJoinCode(c)},[]);
@@ -240,92 +260,93 @@ function Game(){
   const btnTap=useRef({}); // one-shot taps
 
   // Game state ref
-  const mkP=(id,x,f)=>({id,x,y:GY-CH,vy:0,vx:0,health:100,maxHealth:100,special:0,action:null,actionTimer:0,facing:f,isJumping:false,isBlocking:false,combo:0,comboTimer:0,hitStun:0,dd:0,superReady:false,superActive:false,superBullets:0,superBoomerangs:0,superUsed:false,lastDir:0,lastDirTime:0});
-  const newGame=()=>({p1:mkP("gandhi",150,1),p2:mkP("binladen",550,-1),fx:[],shake:0,freeze:0,flash:0,projectiles:[],snd:[],state:"fighting",ann:"ROUND 1",annTimer:120,round:1,wins:{p1:0,p2:0},timer:RT,timerAcc:0,roundEnded:false});
+  const mkP=(id,x,f)=>({id,x,y:GY-CH,vy:0,vx:0,health:100,maxHealth:100,special:0,action:null,actionTimer:0,facing:f,isJumping:false,isBlocking:false,combo:0,comboTimer:0,hitStun:0,dd:0,superReady:false,superActive:false,superBullets:0,superBoomerangs:0,superUsed:false,superDeactivateFrame:null,lastDir:0,lastDirTime:0});
+  const newGame=(round=1,wins={p1:0,p2:0})=>({p1:mkP("gandhi",150,1),p2:mkP("binladen",550,-1),fx:[],shake:0,freeze:0,flash:0,projectiles:[],snd:[],state:"fighting",ann:round===3?"FINAL ROUND":`ROUND ${round}`,annTimer:90,round,wins:{...wins},timer:RT,timerAcc:0,roundEnded:false,canRematch:false,nextRoundFrame:null,rematchEnableFrame:null});
   const G=useRef(newGame());
+  const remoteRole=role==="p1"?"p2":"p1";
 
-  // Remote player input (received via WebRTC)
-  const remoteIn=useRef({held:{},tap:{}});
-  // Client interpolation buffer: two snapshots to lerp between
-  const snapA=useRef(null); // older snapshot
-  const snapB=useRef(null); // newer snapshot  
-  const snapTime=useRef(0); // time since last snapshot (0-1 lerp factor)
+  const resetSession=useCallback(()=>{
+    G.current=newGame();
+    frameR.current=0;
+    simFrameR.current=INPUT_DELAY;
+    inputFrameR.current=0;
+    inputBufR.current={p1:new Map(),p2:new Map()};
+    hashR.current={local:new Map(),remote:new Map()};
+    clockR.current={last:0,acc:0};
+    btnTap.current={};
+    desyncR.current="";
+  },[]);
+
+  const encodeLocalInput=useCallback(()=>{
+    const held=btnDown.current;
+    const tap=btnTap.current;
+    let mask=0;
+    if(role==="p1"){
+      if(held.a||held._left)mask|=IB.L;
+      if(held.d||held._right)mask|=IB.R;
+      if(held.w||held._up)mask|=IB.U;
+      if(held.s||held._down)mask|=IB.D;
+      if(held.f||held._punch)mask|=IB.P;
+      if(held.g||held._kick)mask|=IB.K;
+      if(held.h||held._special)mask|=IB.S;
+      if(tap.t||tap._super)mask|=IB.SU;
+    }else{
+      if(held.ArrowLeft||held._left)mask|=IB.L;
+      if(held.ArrowRight||held._right)mask|=IB.R;
+      if(held.ArrowUp||held._up)mask|=IB.U;
+      if(held.ArrowDown||held._down)mask|=IB.D;
+      if(held.j||held._punch)mask|=IB.P;
+      if(held.k||held._kick)mask|=IB.K;
+      if(held.l||held._special)mask|=IB.S;
+      if(tap[";"]||tap._super)mask|=IB.SU;
+    }
+    btnTap.current={};
+    return mask;
+  },[role]);
 
   // ─── NETWORK ───
   const onData=useCallback((d)=>{
-    if(isHost.current&&d.t==="i"){
-      // Host receives P2 inputs
-      remoteIn.current={held:d.h||{},tap:d.tp||{}};
-    }else if(!isHost.current&&d.t==="s"){
-      // Client: decode compact format
-      // Player array: [x,y,vy,health,special,action,actionTimer,facing,jumping,blocking,hitStun,superReady,superActive,superBullets,superBoomerangs,superUsed,dd,combo,comboTimer]
-      const dp=(a)=>({x:a[0],y:a[1],vy:a[2],health:a[3],special:a[4],action:a[5]||null,actionTimer:a[6],facing:a[7],isJumping:!!a[8],isBlocking:!!a[9],hitStun:a[10],superReady:!!a[11],superActive:!!a[12],superBullets:a[13],superBoomerangs:a[14],superUsed:!!a[15],dd:a[16],combo:a[17],comboTimer:a[18]});
-      const s1=dp(d.a),s2=dp(d.b);
-      // Push to interpolation buffer
-      snapA.current=snapB.current;
-      snapB.current={p1:s1,p2:s2};
-      snapTime.current=0;
-      // Apply non-interpolatable state
-      const g=G.current;
-      g.state=d.s;g.ann=d.n||"";g.annTimer=d.nt||0;
-      g.round=d.r;g.wins=d.w;g.timer=d.m;g.canRematch=!!d.c;
-      g.shake=d.k||0;g.freeze=d.fz||0;g.flash=d.fl||0;
-      g.projectiles=(d.p||[]).map(a=>({type:a[0]===1?"boomerang":"rocket",x:a[1],y:a[2],dir:a[3],phase:a[4]===1?"out":"back",rotation:a[5],age:a[6],hit:!!a[7],owner:a[8]===1?"p1":"p2"}));
-      g.fx=(d.f||[]).map(a=>({x:a[0],y:a[1],f:a[2],t:a[3]===1?"special":"normal"}));
-      if(d.x)d.x.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,rocketLaunch:45,rocketExplode:60,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
+    if(d.t==="i"&&typeof d.f==="number"){
+      inputBufR.current[remoteRole]?.set(d.f,d.i|0);
+    }else if(d.t==="h"&&typeof d.f==="number"){
+      hashR.current.remote.set(d.f,d.h>>>0);
+      const localHash=hashR.current.local.get(d.f);
+      if(localHash!=null&&localHash!==(d.h>>>0))desyncR.current=`DESYNC DETECTED AT F${d.f}`;
     }
-  },[]);
+  },[remoteRole]);
 
-  const serialize=useCallback(()=>{
-    const g=G.current,p1=g.p1,p2=g.p2;
-    // Compact: use arrays instead of objects to minimize JSON size
-    // Player: [x,y,vy,health,special,action,actionTimer,facing,jumping,blocking,hitStun,superReady,superActive,superBullets,superBoomerangs,superUsed,dd,combo,comboTimer]
-    const P=(p)=>[p.x|0,p.y|0,p.vy|0,+(p.health.toFixed(1)),Math.round(p.special),p.action||0,p.actionTimer,p.facing,p.isJumping?1:0,p.isBlocking?1:0,p.hitStun,p.superReady?1:0,p.superActive?1:0,p.superBullets,p.superBoomerangs,p.superUsed?1:0,p.dd|0,p.combo,p.comboTimer];
-    return{t:"s",a:P(p1),b:P(p2),
-      p:g.projectiles.length>0?g.projectiles.map(p=>[p.type==="boomerang"?1:2,p.x|0,p.y|0,p.dir,p.phase==="out"?1:0,p.rotation|0,p.age,p.hit?1:0,p.owner==="p1"?1:2]):[],
-      f:g.fx.length>0?g.fx.slice(0,3).map(e=>[e.x|0,e.y|0,e.f,e.t==="special"?1:0]):[],
-      k:g.shake,fz:g.freeze||0,fl:g.flash||0,s:g.state,n:g.ann,nt:g.annTimer,r:g.round,w:g.wins,m:g.timer,c:g.canRematch?1:0,
-      x:g.snd.splice(0)};
-  },[]);
-
-  const setupConn=useCallback((conn,asHost)=>{
+  const setupConn=useCallback((conn)=>{
     connR.current=conn;
     conn.on("open",()=>{
-      console.log("Connected! Host:",asHost);
       sfx.init();sfx.connect();
-      if(asHost){
-        G.current=newGame();
-        G.current.ann="ROUND 1";G.current.annTimer=90;
-        // After 90 frames (~1.5s) the annTimer will reach 0 and ann becomes "FIGHT!"
-        // After another 60 frames ann clears and state stays "fighting"
-      }
+      resetSession();
       setScreen("fight");setStatus("");
     });
     conn.on("data",onData);
     conn.on("close",()=>{setScreen("dc");setStatus("Opponent disconnected")});
     conn.on("error",e=>{console.error("Conn error:",e);setStatus("Error: "+e.type)});
-  },[onData]);
+  },[onData,resetSession]);
 
   const create=useCallback(()=>{
     sfx.init();
     const code=String(Math.floor(1000+Math.random()*9000));
-    setRoomCode(code);setRole("p1");isHost.current=true;
+    setRoomCode(code);setRole("p1");
     setScreen("waiting");setStatus("Creating...");
     const peer=new Peer("ML-"+code,{debug:1});peerR.current=peer;
     peer.on("open",()=>setStatus("Waiting for opponent... Code: "+code));
-    peer.on("connection",c=>setupConn(c,true));
+    peer.on("connection",c=>setupConn(c));
     peer.on("error",e=>{if(e.type==="unavailable-id"){setStatus("Code taken");setScreen("lobby")}else setStatus("Error: "+e.type)});
   },[setupConn]);
 
   const join=useCallback((code)=>{
     if(!code||code.length!==4)return;
     sfx.init();
-    setRole("p2");isHost.current=false;
+    setRole("p2");
     setScreen("waiting");setStatus("Connecting...");
     const peer=new Peer(undefined,{debug:1});peerR.current=peer;
     peer.on("open",()=>{
       const c=peer.connect("ML-"+code,{reliable:true});
-      setupConn(c,false);
+      setupConn(c);
       setTimeout(()=>{if(!connR.current?.open){setStatus("Room not found");setScreen("lobby")}},8000);
     });
     peer.on("error",e=>{setStatus(e.type==="peer-unavailable"?"Room not found":"Error: "+e.type);setScreen("lobby")});
@@ -355,7 +376,7 @@ function Game(){
     return()=>{window.removeEventListener("keydown",dn);window.removeEventListener("keyup",up)};
   },[]);
 
-  // ─── COMBAT HELPER (host only) ───
+  // ─── COMBAT HELPER ───
   const attack=(atk,def,type,g)=>{
     if(g.roundEnded)return;
     const cd=CHARS[atk.id];
@@ -396,86 +417,83 @@ function Game(){
     if(screen!=="fight")return;
     const cv=cvR.current;if(!cv)return;
     const ctx=cv.getContext("2d");
-    let aid,sendCtr=0;
-    console.log("Game loop started! Host:",isHost.current);
+    let aid;
+    const vibMap={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,rocketLaunch:45,rocketExplode:60,boomerang:35};
 
-    const loop=()=>{
-      const fr=frameR.current++;
-      let g=G.current;
-      const host=isHost.current;
-      const myRole=role;
+    const playQueued=(g)=>{
+      g.snd.forEach(s=>{if(sfx[s])sfx[s]();if(vibMap[s])try{navigator.vibrate?.(vibMap[s])}catch(e){}});
+      g.snd=[];
+    };
 
-      // Collect local input
-      const held={...btnDown.current};
-      const tap={...btnTap.current};
-      btnTap.current={}; // consume taps
+    function startNextRound(g,round,wins){
+      const ng=newGame(round,wins);
+      ng.snd.push("roundStart");
+      G.current=ng;
+      return ng;
+    }
 
-      // CLIENT: send inputs to host
-      if(!host&&connR.current?.open){
-        // Map generic mobile keys to P2 keys
-        const h={},tp={};
-        // Keyboard P2 keys pass through
-        for(const k of["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","j","k","l",";"]){
-          if(held[k])h[k]=true;if(tap[k])tp[k]=true;
+    function resolveRoundTransition(g,fr){
+      if(g.rematchEnableFrame!=null&&fr>=g.rematchEnableFrame){
+        g.canRematch=true;
+        g.rematchEnableFrame=null;
+      }
+      if(g.nextRoundFrame==null||fr<g.nextRoundFrame)return g;
+      g.nextRoundFrame=null;
+      if(g.wins.p1>=2||g.wins.p2>=2){
+        g.ann=`${g.wins.p1>=2?CHARS.gandhi.name:CHARS.binladen.name} WINS!`;
+        g.state="gameover";
+        g.annTimer=-1;
+        g.rematchEnableFrame=fr+180;
+        g.snd.push("win");
+        return g;
+      }
+      return startNextRound(g,g.round+1,g.wins);
+    }
+
+    function endRound(g,winner,fr){
+      g.state="ko";
+      g.ann="K.O.!";
+      g.annTimer=150;
+      g.snd.push("ko");
+      if(winner!=="draw")g.wins={...g.wins,[winner]:g.wins[winner]+1};
+      g.nextRoundFrame=fr+150;
+      g.roundEnded=true;
+    }
+
+    function stepFrame(g,p1Mask,p2Mask,fr){
+      g=resolveRoundTransition(g,fr);
+
+      if(g.annTimer>0){
+        g.annTimer--;
+        if(g.annTimer===0&&(g.ann==="ROUND 1"||g.ann==="ROUND 2"||g.ann==="FINAL ROUND")){
+          g.ann="FIGHT!";g.annTimer=60;g.snd.push("fight");
+        }else if(g.annTimer===0&&g.ann==="FIGHT!"){
+          g.ann="";
         }
-        // Mobile generic keys → P2
-        if(held._left)h.ArrowLeft=true;if(held._right)h.ArrowRight=true;
-        if(held._up)h.ArrowUp=true;if(held._down)h.ArrowDown=true;
-        if(held._punch)h.j=true;if(held._kick)h.k=true;
-        if(held._special)h.l=true;if(tap._super)tp[";"]=true;
-        connR.current.send({t:"i",h,tp});
       }
 
-      // HOST: simulate game
-      if(host){
-        // Announcement timer
-        if(g.annTimer>0){
-          g.annTimer--;
-          if(g.annTimer===0&&(g.ann==="ROUND 1"||g.ann==="ROUND 2"||g.ann==="FINAL ROUND")){
-            g.ann="FIGHT!";g.annTimer=60;g.snd.push("fight");
-          }else if(g.annTimer===0&&g.ann==="FIGHT!"){
-            g.ann="";
-          }
-        }
+      if(g.p1.superDeactivateFrame!=null&&fr>=g.p1.superDeactivateFrame){g.p1.superActive=false;g.p1.superDeactivateFrame=null}
+      if(g.p2.superDeactivateFrame!=null&&fr>=g.p2.superDeactivateFrame){g.p2.superActive=false;g.p2.superDeactivateFrame=null}
 
-        // Gameover rematch check
-        if(g.state==="gameover"&&g.canRematch){
-          const anyInput=Object.values(held).some(v=>v)||Object.keys(tap).length>0||Object.values(remoteIn.current.held||{}).some(v=>v)||Object.keys(remoteIn.current.tap||{}).length>0;
-          if(anyInput){
-            const ng=newGame();ng.snd.push("roundStart");
-            G.current=ng;g=G.current;
-          }
-        }
+      if(g.state==="gameover"&&g.canRematch&&(p1Mask||p2Mask)){
+        return startNextRound(g,1,{p1:0,p2:0});
+      }
 
-        if(g.state==="fighting"&&!g.roundEnded){
-          // Hit freeze — pause gameplay for impact feel
-          if(g.freeze>0){g.freeze--;} 
-          else {
-          // P1 input (host local + mobile generic)
-          const p1h={...held};const p1t={...tap};
-          if(p1h._left)p1h.a=true;if(p1h._right)p1h.d=true;
-          if(p1h._up)p1h.w=true;if(p1h._down)p1h.s=true;
-          if(p1h._punch)p1h.f=true;if(p1h._kick)p1h.g=true;
-          if(p1h._special)p1h.h=true;if(p1t._super)p1t.t=true;
-
-          // P2 input (from remote)
-          const p2h=remoteIn.current.held;
-          const p2t=remoteIn.current.tap;
-          remoteIn.current.tap={}; // consume
-
-          // P1 Gandhi movement
+      if(g.state==="fighting"&&!g.roundEnded){
+        if(g.freeze>0){g.freeze--;}
+        else{
           if(g.p1.hitStun>0){g.p1.hitStun--}
           else{
-            if(p1h.a)g.p1.x-=CHARS.gandhi.sp;
-            if(p1h.d)g.p1.x+=CHARS.gandhi.sp;
-            if(p1h.w&&!g.p1.isJumping){g.p1.vy=-15;g.p1.isJumping=true}
-            g.p1.isBlocking=!!p1h.s;
+            if(hasBit(p1Mask,IB.L))g.p1.x-=CHARS.gandhi.sp;
+            if(hasBit(p1Mask,IB.R))g.p1.x+=CHARS.gandhi.sp;
+            if(hasBit(p1Mask,IB.U)&&!g.p1.isJumping){g.p1.vy=-15;g.p1.isJumping=true}
+            g.p1.isBlocking=hasBit(p1Mask,IB.D);
             if(!g.p1.action||(g.p1.action==="super"&&g.p1.actionTimer<=0)){
-              if(p1h.f){g.p1.action="punch";g.p1.actionTimer=12;g.snd.push("punch");attack(g.p1,g.p2,"punch",g)}
-              else if(p1h.g){g.p1.action="kick";g.p1.actionTimer=18;g.snd.push("kick");attack(g.p1,g.p2,"kick",g)}
-              else if(p1h.h&&g.p1.special>=100){g.p1.action="special";g.p1.actionTimer=30;g.p1.special=0;attack(g.p1,g.p2,"special",g)}
+              if(hasBit(p1Mask,IB.P)){g.p1.action="punch";g.p1.actionTimer=12;g.snd.push("punch");attack(g.p1,g.p2,"punch",g)}
+              else if(hasBit(p1Mask,IB.K)){g.p1.action="kick";g.p1.actionTimer=18;g.snd.push("kick");attack(g.p1,g.p2,"kick",g)}
+              else if(hasBit(p1Mask,IB.S)&&g.p1.special>=100){g.p1.action="special";g.p1.actionTimer=30;g.p1.special=0;attack(g.p1,g.p2,"special",g)}
             }
-            if(p1t.t){
+            if(hasBit(p1Mask,IB.SU)){
               if(g.p1.superReady&&!g.p1.superActive&&!g.p1.superUsed){
                 g.p1.superReady=false;g.p1.superActive=true;g.p1.superBoomerangs=2;g.p1.superUsed=true;g.snd.push("boomerang");
                 const d=g.p1.facing;g.projectiles.push({type:"boomerang",owner:"p1",x:g.p1.x+CW/2+d*20,y:g.p1.y+30,dir:d,phase:"out",rotation:0,age:0,hit:false});
@@ -484,26 +502,25 @@ function Game(){
                 g.snd.push("boomerang");const d=g.p1.facing;
                 g.projectiles.push({type:"boomerang",owner:"p1",x:g.p1.x+CW/2+d*20,y:g.p1.y+40,dir:d,phase:"out",rotation:1.5,age:0,hit:false});
                 g.p1.superBoomerangs--;g.p1.action="super";g.p1.actionTimer=15;
-                if(g.p1.superBoomerangs<=0)setTimeout(()=>{g.p1.superActive=false},1500);
+                if(g.p1.superBoomerangs<=0)g.p1.superDeactivateFrame=fr+90;
               }
             }
           }
 
-          // P2 Bin Laden movement
           if(g.p2.hitStun>0){g.p2.hitStun--}
           else{
-            if(p2h.ArrowLeft)g.p2.x-=CHARS.binladen.sp;
-            if(p2h.ArrowRight)g.p2.x+=CHARS.binladen.sp;
-            if(p2h.ArrowUp&&!g.p2.isJumping){g.p2.vy=-15;g.p2.isJumping=true}
-            g.p2.isBlocking=!!p2h.ArrowDown;
+            if(hasBit(p2Mask,IB.L))g.p2.x-=CHARS.binladen.sp;
+            if(hasBit(p2Mask,IB.R))g.p2.x+=CHARS.binladen.sp;
+            if(hasBit(p2Mask,IB.U)&&!g.p2.isJumping){g.p2.vy=-15;g.p2.isJumping=true}
+            g.p2.isBlocking=hasBit(p2Mask,IB.D);
             if(!g.p2.action||(g.p2.action==="super"&&g.p2.actionTimer<=0)){
               if(!g.p2.superActive){
-                if(p2h.j){g.p2.action="punch";g.p2.actionTimer=12;g.snd.push("punch");attack(g.p2,g.p1,"punch",g)}
-                else if(p2h.k){g.p2.action="kick";g.p2.actionTimer=18;g.snd.push("kick");attack(g.p2,g.p1,"kick",g)}
-                else if(p2h.l&&g.p2.special>=100){g.p2.action="special";g.p2.actionTimer=30;g.p2.special=0;attack(g.p2,g.p1,"special",g)}
+                if(hasBit(p2Mask,IB.P)){g.p2.action="punch";g.p2.actionTimer=12;g.snd.push("punch");attack(g.p2,g.p1,"punch",g)}
+                else if(hasBit(p2Mask,IB.K)){g.p2.action="kick";g.p2.actionTimer=18;g.snd.push("kick");attack(g.p2,g.p1,"kick",g)}
+                else if(hasBit(p2Mask,IB.S)&&g.p2.special>=100){g.p2.action="special";g.p2.actionTimer=30;g.p2.special=0;attack(g.p2,g.p1,"special",g)}
               }
             }
-            if(p2t&&p2t[";"]){
+            if(hasBit(p2Mask,IB.SU)){
               if(g.p2.superReady&&!g.p2.superActive&&!g.p2.superUsed){
                 g.p2.superReady=false;g.p2.superActive=true;g.p2.superBullets=5;g.p2.superUsed=true;g.snd.push("rocketLaunch");
                 const d=g.p2.facing;g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
@@ -512,91 +529,90 @@ function Game(){
                 g.snd.push("rocketLaunch");const d=g.p2.facing;
                 g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
                 g.p2.superBullets--;g.p2.action="super";g.p2.actionTimer=10;
-                if(g.p2.superBullets<=0)setTimeout(()=>{g.p2.superActive=false},300);
+                if(g.p2.superBullets<=0)g.p2.superDeactivateFrame=fr+18;
               }
             }
           }
 
-          // Physics
           for(const p of[g.p1,g.p2]){
-            p.vy+=1.0;p.y+=p.vy; // Tighter gravity (was 0.8)
+            p.vy+=1.0;p.y+=p.vy;
             if(p.y>=GY-CH){p.y=GY-CH;p.vy=0;p.isJumping=false}
-            // Knockback velocity (friction decay)
             if(p.vx){p.x+=p.vx;p.vx*=0.75;if(Math.abs(p.vx)<0.5)p.vx=0}
             p.x=Math.max(10,Math.min(W-CW-10,p.x));
             if(p.actionTimer>0){p.actionTimer--;if(p.actionTimer<=0&&(p.action!=="super"||!p.superActive))p.action=null}
             if(p.comboTimer>0){p.comboTimer--;if(p.comboTimer<=0)p.combo=0}
           }
-          } // end freeze else
-          g.p1.facing=g.p1.x<g.p2.x?1:-1;g.p2.facing=g.p2.x<g.p1.x?1:-1;
-          const ol=CW-Math.abs(g.p1.x-g.p2.x);
-          if(ol>0&&Math.abs(g.p1.y-g.p2.y)<CH){const pu=ol/2;if(g.p1.x<g.p2.x){g.p1.x-=pu;g.p2.x+=pu}else{g.p1.x+=pu;g.p2.x-=pu}}
-          g.p1.special=Math.min(100,g.p1.special+.05);g.p2.special=Math.min(100,g.p2.special+.05);
-          updProj(g);
-
-          // Timer
-          g.timerAcc++;
-          if(g.timerAcc>=60){g.timerAcc=0;if(g.timer>0)g.timer--}
-          if(g.timer<=0&&!g.roundEnded){
-            g.roundEnded=true;
-            const w=g.p1.health>g.p2.health?"p1":g.p2.health>g.p1.health?"p2":"draw";
-            endRound(g,w);
-          }
-
-          // KO check
-          if(!g.roundEnded){
-            if(g.p1.health<=0){g.roundEnded=true;endRound(g,"p2")}
-            else if(g.p2.health<=0){g.roundEnded=true;endRound(g,"p1")}
-          }
-
-          if(fr%120===0)g.snd.push("bgDrone");
         }
 
-        // Update effects
-        g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
-        if(g.shake>0)g.shake--;
-        if(g.flash>0)g.flash--;
+        g.p1.facing=g.p1.x<g.p2.x?1:-1;g.p2.facing=g.p2.x<g.p1.x?1:-1;
+        const ol=CW-Math.abs(g.p1.x-g.p2.x);
+        if(ol>0&&Math.abs(g.p1.y-g.p2.y)<CH){const pu=ol/2;if(g.p1.x<g.p2.x){g.p1.x-=pu;g.p2.x+=pu}else{g.p1.x+=pu;g.p2.x-=pu}}
+        g.p1.special=Math.min(100,g.p1.special+.05);g.p2.special=Math.min(100,g.p2.special+.05);
+        updProj(g);
 
-        // Play SFX locally
-        g.snd.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,rocketLaunch:45,rocketExplode:60,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
-
-        // Send state to client
-        sendCtr++;
-        if(connR.current?.open&&sendCtr%3===0){
-          try{connR.current.send(serialize())}catch(e){}
+        g.timerAcc++;
+        if(g.timerAcc>=60){g.timerAcc=0;if(g.timer>0)g.timer--}
+        if(g.timer<=0&&!g.roundEnded){
+          const w=g.p1.health>g.p2.health?"p1":g.p2.health>g.p1.health?"p2":"draw";
+          endRound(g,w,fr);
         }
-        g.snd=[];
+        if(!g.roundEnded){
+          if(g.p1.health<=0)endRound(g,"p2",fr);
+          else if(g.p2.health<=0)endRound(g,"p1",fr);
+        }
+        if(fr%120===0)g.snd.push("bgDrone");
       }
 
-      // ─── CLIENT INTERPOLATION ───
-      if(!host&&snapA.current&&snapB.current){
-        snapTime.current=Math.min(1,snapTime.current+1/3);
-        const t=snapTime.current;
-        const lerp=(a,b)=>a+(b-a)*t;
-        const A=snapA.current,B=snapB.current;
-        // Lerp positions smoothly
-        g.p1.x=lerp(A.p1.x,B.p1.x);g.p1.y=lerp(A.p1.y,B.p1.y);
-        g.p2.x=lerp(A.p2.x,B.p2.x);g.p2.y=lerp(A.p2.y,B.p2.y);
-        // Snap health and special immediately for responsive combat feel
-        g.p1.health=B.p1.health;g.p2.health=B.p2.health;
-        g.p1.special=B.p1.special;g.p2.special=B.p2.special;
-        // Snap discrete states
-        g.p1.action=B.p1.action;g.p1.facing=B.p1.facing;g.p1.isBlocking=B.p1.isBlocking;
-        g.p1.superReady=B.p1.superReady;g.p1.superActive=B.p1.superActive;g.p1.superBoomerangs=B.p1.superBoomerangs;
-        g.p1.hitStun=B.p1.hitStun;g.p1.actionTimer=B.p1.actionTimer;
-        g.p2.action=B.p2.action;g.p2.facing=B.p2.facing;g.p2.isBlocking=B.p2.isBlocking;
-        g.p2.superReady=B.p2.superReady;g.p2.superActive=B.p2.superActive;g.p2.superBullets=B.p2.superBullets;
-        g.p2.hitStun=B.p2.hitStun;g.p2.actionTimer=B.p2.actionTimer;
-        g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
-      }else if(!host&&snapB.current&&!snapA.current){
-        const B=snapB.current;
-        g.p1.x=B.p1.x;g.p1.y=B.p1.y;g.p2.x=B.p2.x;g.p2.y=B.p2.y;
-        g.p1.health=B.p1.health;g.p2.health=B.p2.health;g.p1.special=B.p1.special;g.p2.special=B.p2.special;
-        g.p1.action=B.p1.action;g.p1.facing=B.p1.facing;g.p1.isBlocking=B.p1.isBlocking;
-        g.p1.superReady=B.p1.superReady;g.p1.superActive=B.p1.superActive;g.p1.superBoomerangs=B.p1.superBoomerangs;
-        g.p2.action=B.p2.action;g.p2.facing=B.p2.facing;g.p2.isBlocking=B.p2.isBlocking;
-        g.p2.superReady=B.p2.superReady;g.p2.superActive=B.p2.superActive;g.p2.superBullets=B.p2.superBullets;
+      g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
+      if(g.shake>0)g.shake--;
+      if(g.flash>0)g.flash--;
+      return g;
+    }
+
+    const loop=(ts)=>{
+      if(!clockR.current.last)clockR.current.last=ts;
+      const dt=Math.min(100,ts-clockR.current.last);
+      clockR.current.last=ts;
+      clockR.current.acc+=dt;
+
+      while(clockR.current.acc>=FRAME_MS){
+        const targetFrame=inputFrameR.current+INPUT_DELAY;
+        const mask=encodeLocalInput();
+        inputBufR.current[role]?.set(targetFrame,mask);
+        if(connR.current?.open){
+          try{connR.current.send({t:"i",f:targetFrame,i:mask})}catch(e){}
+        }
+        inputFrameR.current++;
+        clockR.current.acc-=FRAME_MS;
       }
+
+      let simSteps=0;
+      while(simSteps<6){
+        const fr=simFrameR.current;
+        const p1Mask=inputBufR.current.p1.get(fr);
+        const p2Mask=inputBufR.current.p2.get(fr);
+        if(p1Mask==null||p2Mask==null)break;
+        inputBufR.current.p1.delete(fr);
+        inputBufR.current.p2.delete(fr);
+        let g=stepFrame(G.current,p1Mask,p2Mask,fr);
+        G.current=g;
+        playQueued(g);
+        if((fr+1)%60===0){
+          const hash=hashGameState(g);
+          hashR.current.local.set(fr+1,hash);
+          const remoteHash=hashR.current.remote.get(fr+1);
+          if(remoteHash!=null&&remoteHash!==hash)desyncR.current=`DESYNC DETECTED AT F${fr+1}`;
+          if(connR.current?.open){
+            try{connR.current.send({t:"h",f:fr+1,h:hash})}catch(e){}
+          }
+        }
+        simFrameR.current++;
+        simSteps++;
+      }
+
+      const fr=frameR.current++;
+      const g=G.current;
+      const myRole=role;
 
       // ─── RENDER (both host & client) ───
       ctx.save();
@@ -641,33 +657,18 @@ function Game(){
           ctx.fillText("TAP ANY BUTTON FOR REMATCH",W/2,H/2+35);
         }
       }
+      if(desyncR.current){
+        ctx.fillStyle="rgba(120,0,0,0.75)";ctx.fillRect(W/2-135,76,270,20);
+        ctx.fillStyle="#ff6666";ctx.font=`8px ${PF}`;ctx.textAlign="center";
+        ctx.fillText(desyncR.current,W/2,90);
+      }
       ctx.restore();
       aid=requestAnimationFrame(loop);
     };
 
-    // Round end handler (called from within game loop)
-    function endRound(g,winner){
-      g.state="ko";g.ann="K.O.!";g.annTimer=150;g.snd.push("ko");
-      const nw={...g.wins};if(winner!=="draw")nw[winner]++;g.wins=nw;
-      setTimeout(()=>{
-        if(nw.p1>=2||nw.p2>=2){
-          g.ann=`${nw.p1>=2?CHARS.gandhi.name:CHARS.binladen.name} WINS!`;
-          g.state="gameover";g.annTimer=9999;g.snd.push("win");
-          // After 3s, allow rematch
-          setTimeout(()=>{g.canRematch=true},3000);
-        }else{
-          const nr=g.round+1;
-          const ng=newGame();ng.round=nr;ng.wins=nw;
-          ng.ann=nr===3?"FINAL ROUND":`ROUND ${nr}`;ng.annTimer=90;
-          ng.snd.push("roundStart");
-          G.current=ng;
-        }
-      },2500);
-    }
-
     aid=requestAnimationFrame(loop);
     return()=>cancelAnimationFrame(aid);
-  },[screen,role,serialize]);
+  },[encodeLocalInput,role,screen]);
 
   // ─── MOBILE BUTTON HANDLERS ───
   const vib=(ms)=>{try{navigator.vibrate?.(ms)}catch(e){}};
