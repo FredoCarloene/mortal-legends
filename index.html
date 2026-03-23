@@ -620,7 +620,7 @@ function Game(){
 
   const Btn=({label,k,color="#fff",sz=64})=>(
     <button
-      onTouchStart={e=>{e.preventDefault();e.stopPropagation();hold(k,true)}}
+      onTouchStart={e=>{e.preventDefault();e.stopPropagation();navigator.vibrate&&navigator.vibrate(18);hold(k,true)}}
       onTouchEnd={e=>{e.preventDefault();e.stopPropagation();hold(k,false)}}
       onTouchCancel={e=>{hold(k,false)}}
       onMouseDown={()=>hold(k,true)}
@@ -631,7 +631,7 @@ function Game(){
   );
   const TapBtn=({label,k,color="#fff",sz=64})=>(
     <button
-      onTouchStart={e=>{e.preventDefault();e.stopPropagation();tap(k)}}
+      onTouchStart={e=>{e.preventDefault();e.stopPropagation();navigator.vibrate&&navigator.vibrate(25);tap(k)}}
       onMouseDown={()=>tap(k)}
       style={{width:sz,height:sz,borderRadius:"50%",border:`1.5px solid ${color}40`,background:"rgba(255,255,255,0.06)",color:`${color}cc`,fontFamily:"sans-serif",fontSize:sz*0.34,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
     >{label}</button>
