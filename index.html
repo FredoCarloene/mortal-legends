@@ -54,25 +54,26 @@ function exitFS(){
   }catch(e){}
 }
 function isFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement)}
-const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,INPUT_DELAY=6,MIN_INPUT_DELAY=4,MAX_INPUT_DELAY=10,MAX_SIM_STEPS=1;
+const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,MAX_SIM_STEPS=3,ROLLBACK_WINDOW=180,SYNC_START_DELAY_MS=180,MAX_PREDICTION_FRAMES=10;
 const IB={L:1,R:2,U:4,D:8,P:16,K:32,S:64,SU:128};
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:3,kd:5,sd:14,sp:3.2,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:3,sd:10,sp:4.5,br:0.75}};
 const PF="'Press Start 2P',monospace";
+const ROCKET_FX_OFFSETS=[[-18,-10],[-8,8],[0,0],[10,-6],[18,10]];
 const hasBit=(mask,bit)=>(mask&bit)!==0;
 const lerp=(a,b,t)=>a+(b-a)*t;
-function hashGameState(g){
-  const vals=[
-    g.p1.x,g.p1.y,g.p1.vx,g.p1.vy,g.p1.health,g.p1.special,g.p1.hitStun,g.p1.combo,g.p1.superActive?1:0,g.p1.superBullets,g.p1.superBoomerangs,
-    g.p2.x,g.p2.y,g.p2.vx,g.p2.vy,g.p2.health,g.p2.special,g.p2.hitStun,g.p2.combo,g.p2.superActive?1:0,g.p2.superBullets,g.p2.superBoomerangs,
-    g.timer,g.round,g.wins.p1,g.wins.p2,g.projectiles.length,g.fx.length,g.state==="fighting"?1:g.state==="ko"?2:g.state==="gameover"?3:0
-  ];
-  let h=2166136261>>>0;
-  for(const v of vals){
-    const n=Math.round(Number(v||0)*100);
-    h^=n>>>0;
-    h=Math.imul(h,16777619)>>>0;
-  }
-  return h>>>0;
+function cloneGameState(g){
+  return{
+    ...g,
+    p1:{...g.p1},
+    p2:{...g.p2},
+    wins:{...g.wins},
+    projectiles:g.projectiles.map(p=>({...p})),
+    fx:g.fx.map(e=>({...e})),
+    snd:[]
+  };
+}
+function pruneFrameMap(map,minFrame){
+  for(const k of Array.from(map.keys()))if(k<minFrame)map.delete(k);
 }
 function captureVisualState(g){
   return{
@@ -88,9 +89,6 @@ function blendProjectiles(prev,curr,t){
     if(!a||a.type!==p.type||a.owner!==p.owner)return p;
     return{...p,x:lerp(a.x,p.x,t),y:lerp(a.y,p.y,t),rotation:lerp(a.rotation||0,p.rotation||0,t)};
   });
-}
-function mkNetStats(){
-  return{delay:INPUT_DELAY,stalls:0,stallRenders:0,stableFrames:0,lastMissing:"",simBase:4,simJitter:2};
 }
 
 // SFX
@@ -141,8 +139,8 @@ function updProj(g){
       if(Math.abs(p.x-tx)<35&&Math.abs(p.y-ty)<50&&!p.hit){p.hit=true;const dm=tg.isBlocking?2:8;tg.health=Math.max(0,tg.health-dm);tg.hitStun=14;g.shake=12;g.flash=4;g.freeze=4;
         // Knockback from explosion
         tg.vx=(tg.x>p.x?1:-1)*15;tg.vy=-5;
-        // Explosion effect - multiple particles
-        for(let i=0;i<5;i++)g.fx.push({x:tx+(Math.random()-0.5)*40,y:tg.y+20+(Math.random()-0.5)*30,f:0,t:"special"});
+        // Deterministic burst offsets keep rollback resimulation identical on both peers.
+        for(const[oX,oY]of ROCKET_FX_OFFSETS)g.fx.push({x:tx+oX,y:tg.y+20+oY,f:0,t:"special"});
         g.snd.push(tg.isBlocking?"block":"rocketExplode");(p.owner==="p1"?g.p1:g.p2).dd+=dm;return false}
       return p.x>-20&&p.x<W+20;
     }
@@ -242,40 +240,36 @@ function drawHB(c,x,y,hp,mx,sp,nm,ac,isR,sr,sa,sl,sc){
 function drawFx(c,x,y,f,t){if(f>15)return;const a=1-f/15,s=10+f*3;if(t==="special"){c.fillStyle=`rgba(255,200,50,${a})`;c.beginPath();c.arc(x,y,s*2,0,Math.PI*2);c.fill()}else{c.fillStyle=`rgba(255,255,255,${a})`;c.beginPath();c.arc(x,y,s,0,Math.PI*2);c.fill()}}
 
 // ─── MAIN COMPONENT ───
-function Game(){
+function ActiveGame(){
   const cvR=useRef(null);
-  const[screen,setScreen]=useState("splash"); // splash|lobby|waiting|fight|dc
+  const[screen,setScreen]=useState("splash");
   const[roomCode,setRoomCode]=useState("");
   const[joinCode,setJoinCode]=useState("");
-  const[role,setRole]=useState(null); // "p1"|"p2"
+  const[role,setRole]=useState(null);
   const[status,setStatus]=useState("");
-  const[netMode,setNetMode]=useState("peer"); // peer|sim
   const[isMobile,setIsMobile]=useState(false);
   const[copied,setCopied]=useState(false);
   const[isFS,setIsFS]=useState(false);
   const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(/Macintosh/.test(navigator.userAgent)&&"ontouchend"in document);
 
-  // Refs for game state (no React re-renders during gameplay)
   const connR=useRef(null);
   const peerR=useRef(null);
-  const frameR=useRef(0);
+  const renderFrameR=useRef(0);
   const simFrameR=useRef(0);
-  const inputFrameR=useRef(0);
-  const inputBufR=useRef({p1:new Map(),p2:new Map()});
-  const hashR=useRef({local:new Map(),remote:new Map()});
   const clockR=useRef({last:0,acc:0});
-  const desyncR=useRef("");
   const roleR=useRef(null);
+  const localInputsR=useRef(new Map());
+  const remoteInputsR=useRef(new Map());
+  const usedRemoteInputsR=useRef(new Map());
+  const stateHistoryR=useRef(new Map());
+  const lastRemoteMaskR=useRef(0);
+  const latestRemoteFrameR=useRef(-1);
+  const remoteReadyR=useRef(false);
+  const startAtR=useRef(null);
   const visR=useRef({prev:null,curr:null});
-  const netStatsR=useRef(mkNetStats());
-  const simNetR=useRef(null);
-  const screenR=useRef("splash");
-  const debugOutR=useRef(null);
-  const appliedMaskR=useRef({p1:0,p2:0});
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const c=p.get("room");if(c&&c.length===4)setJoinCode(c)},[]);
-  useEffect(()=>{screenR.current=screen},[screen]);
   useEffect(()=>{roleR.current=role},[role]);
   useEffect(()=>{
     const fn=()=>setIsFS(isFullscreen());
@@ -284,32 +278,37 @@ function Game(){
     return()=>{document.removeEventListener("fullscreenchange",fn);document.removeEventListener("webkitfullscreenchange",fn)};
   },[]);
 
-  // Mobile button state - directly readable by game loop
-  const btnDown=useRef({}); // currently held buttons
-  const btnTap=useRef({}); // one-shot taps
+  const btnDown=useRef({});
+  const btnTap=useRef({});
 
-  // Game state ref
   const mkP=(id,x,f)=>({id,x,y:GY-CH,vy:0,vx:0,health:100,maxHealth:100,special:0,action:null,actionTimer:0,facing:f,isJumping:false,isBlocking:false,combo:0,comboTimer:0,hitStun:0,dd:0,superReady:false,superActive:false,superBullets:0,superBoomerangs:0,superUsed:false,superDeactivateFrame:null,lastDir:0,lastDirTime:0});
   const newGame=(round=1,wins={p1:0,p2:0})=>({p1:mkP("gandhi",150,1),p2:mkP("binladen",550,-1),fx:[],shake:0,freeze:0,flash:0,projectiles:[],snd:[],state:"fighting",ann:round===3?"FINAL ROUND":`ROUND ${round}`,annTimer:90,round,wins:{...wins},timer:RT,timerAcc:0,roundEnded:false,canRematch:false,nextRoundFrame:null,rematchEnableFrame:null});
   const G=useRef(newGame());
 
   const resetSession=useCallback(()=>{
-    const p1Buf=new Map();
-    const p2Buf=new Map();
-    for(let f=0;f<INPUT_DELAY;f++){p1Buf.set(f,0);p2Buf.set(f,0)}
     G.current=newGame();
     const vis=captureVisualState(G.current);
     visR.current={prev:vis,curr:vis};
-    frameR.current=0;
+    renderFrameR.current=0;
     simFrameR.current=0;
-    inputFrameR.current=0;
-    inputBufR.current={p1:p1Buf,p2:p2Buf};
-    hashR.current={local:new Map(),remote:new Map()};
     clockR.current={last:0,acc:0};
+    localInputsR.current=new Map();
+    remoteInputsR.current=new Map();
+    usedRemoteInputsR.current=new Map();
+    stateHistoryR.current=new Map([[0,cloneGameState(G.current)]]);
+    lastRemoteMaskR.current=0;
+    latestRemoteFrameR.current=-1;
+    remoteReadyR.current=false;
+    startAtR.current=null;
     btnTap.current={};
-    desyncR.current="";
-    netStatsR.current=mkNetStats();
-    appliedMaskR.current={p1:0,p2:0};
+  },[]);
+
+  const trimHistory=useCallback((frame)=>{
+    const minFrame=frame-ROLLBACK_WINDOW;
+    pruneFrameMap(localInputsR.current,minFrame);
+    pruneFrameMap(remoteInputsR.current,minFrame);
+    pruneFrameMap(usedRemoteInputsR.current,minFrame);
+    pruneFrameMap(stateHistoryR.current,minFrame);
   },[]);
 
   const encodeLocalInput=useCallback(()=>{
@@ -341,80 +340,6 @@ function Game(){
     return mask;
   },[]);
 
-  // ─── NETWORK ───
-  const onData=useCallback((d)=>{
-    const remoteRole=roleR.current==="p1"?"p2":"p1";
-    if(d.t==="i"&&typeof d.f==="number"){
-      inputBufR.current[remoteRole]?.set(d.f,d.i|0);
-    }else if(d.t==="h"&&typeof d.f==="number"){
-      hashR.current.remote.set(d.f,d.h>>>0);
-      const localHash=hashR.current.local.get(d.f);
-      if(localHash!=null&&localHash!==(d.h>>>0))desyncR.current=`DESYNC DETECTED AT F${d.f}`;
-    }
-  },[]);
-
-  const setupConn=useCallback((conn)=>{
-    connR.current=conn;
-    conn.on("open",()=>{
-      sfx.init();sfx.connect();
-      resetSession();
-      setScreen("fight");setStatus("");
-    });
-    conn.on("data",onData);
-    conn.on("close",()=>{setScreen("dc");setStatus("Opponent disconnected")});
-    conn.on("error",e=>{console.error("Conn error:",e);setStatus("Error: "+e.type)});
-  },[onData,resetSession]);
-
-  const startSimTest=useCallback(()=>{
-    roleR.current="p1";
-    setRole("p1");
-    setNetMode("sim");
-    setRoomCode("");
-    setStatus("SIMULATED 2-DEVICE TEST");
-    connR.current=null;
-    simNetR.current={base:4,jitter:2,seed:1337,maxScheduled:-1,pending:[]};
-    sfx.init();
-    resetSession();
-    setScreen("fight");
-  },[resetSession]);
-
-  useEffect(()=>{
-    const p=new URLSearchParams(window.location.search);
-    if(p.get("autostartSim")==="1")startSimTest();
-  },[startSimTest]);
-
-  const create=useCallback(()=>{
-    sfx.init();
-    const code=String(Math.floor(1000+Math.random()*9000));
-    roleR.current="p1";
-    setNetMode("peer");
-    setRoomCode(code);setRole("p1");
-    setScreen("waiting");setStatus("Creating...");
-    const peer=new Peer("ML-"+code,{debug:1});peerR.current=peer;
-    peer.on("open",()=>setStatus("Waiting for opponent... Code: "+code));
-    peer.on("connection",c=>setupConn(c));
-    peer.on("error",e=>{if(e.type==="unavailable-id"){setStatus("Code taken");setScreen("lobby")}else setStatus("Error: "+e.type)});
-  },[setupConn]);
-
-  const join=useCallback((code)=>{
-    if(!code||code.length!==4)return;
-    sfx.init();
-    roleR.current="p2";
-    setNetMode("peer");
-    setRole("p2");
-    setScreen("waiting");setStatus("Connecting...");
-    const peer=new Peer(undefined,{debug:1});peerR.current=peer;
-    peer.on("open",()=>{
-      const c=peer.connect("ML-"+code,{reliable:true});
-      setupConn(c);
-      setTimeout(()=>{if(!connR.current?.open){setStatus("Room not found");setScreen("lobby")}},8000);
-    });
-    peer.on("error",e=>{setStatus(e.type==="peer-unavailable"?"Room not found":"Error: "+e.type);setScreen("lobby")});
-  },[setupConn]);
-
-  useEffect(()=>()=>{connR.current?.close();peerR.current?.destroy()},[]);
-
-  // ─── KEYBOARD INPUT ───
   useEffect(()=>{
     const keys={};
     const dn=e=>{
@@ -436,8 +361,7 @@ function Game(){
     return()=>{window.removeEventListener("keydown",dn);window.removeEventListener("keyup",up)};
   },[]);
 
-  // ─── COMBAT HELPER ───
-  const attack=(atk,def,type,g)=>{
+  const attack=useCallback((atk,def,type,g)=>{
     if(g.roundEnded)return;
     const cd=CHARS[atk.id];
     let dm=0,rc=50,kb=0,freeze=0;
@@ -448,17 +372,14 @@ function Game(){
       const dir=atk.x<def.x?1:-1;
       if(def.isBlocking){
         dm*=(1-cd.br);g.shake=3;g.snd.push("block");
-        // Small pushback on block
         def.vx=dir*4;atk.vx=-dir*2;
         freeze=1;
       }else{
-        // Scale shake and freeze with combo
         const comboMul=Math.min(1.5,1+def.combo*0.1);
         g.shake=Math.round((type==="special"?12:6)*comboMul);
         g.flash=type==="special"?4:2;
         g.freeze=Math.round(freeze*comboMul);
         def.combo++;def.comboTimer=90;
-        // Knockback - push defender back, slight push on attacker
         def.vx=dir*kb*comboMul;
         def.vy=type==="special"?-4:type==="kick"?-2:0;
         atk.vx=-dir*2;
@@ -470,91 +391,217 @@ function Game(){
       if(!atk.superReady&&!atk.superActive&&!atk.superUsed&&atk.dd>=def.maxHealth*0.5){atk.superReady=true;g.snd.push("superReady")}
       g.fx.push({x:(atk.x+def.x)/2+CW/2,y:atk.y+30,f:0,t:type==="special"?"special":"normal"});
     }
-  };
-
-  const simRand=useCallback(()=>{
-    const sim=simNetR.current;
-    if(!sim)return 0;
-    sim.seed=(Math.imul(sim.seed,1664525)+1013904223)>>>0;
-    return sim.seed/4294967296;
   },[]);
 
-  const scriptedRemoteMask=useCallback((frame)=>{
-    const phase=frame%240;
-    let mask=0;
-    if(phase<70)mask|=IB.L;
-    else if(phase<140)mask|=IB.R;
-    if(phase===24||phase===96||phase===168)mask|=IB.P;
-    if(phase===60||phase===132)mask|=IB.K;
-    if(phase===100||phase===200)mask|=IB.U;
-    if(phase>180&&phase<220)mask|=IB.D;
-    return mask;
-  },[]);
-
-  const pumpSimulatedRemote=useCallback((maxFrame)=>{
-    const sim=simNetR.current;
-    if(!sim)return;
-    netStatsR.current.simBase=sim.base;
-    netStatsR.current.simJitter=sim.jitter;
-    while(sim.maxScheduled<maxFrame){
-      const f=++sim.maxScheduled;
-      const jitter=Math.floor(simRand()*(sim.jitter*2+1))-sim.jitter;
-      const deliverAt=Math.max(0,f-netStatsR.current.delay+sim.base+jitter);
-      sim.pending.push({deliverAt,f,i:scriptedRemoteMask(f)});
-    }
-    if(sim.pending.length===0)return;
-    const ready=[];
-    const future=[];
-    for(const pkt of sim.pending){
-      if(pkt.deliverAt<=inputFrameR.current)ready.push(pkt);
-      else future.push(pkt);
-    }
-    sim.pending=future;
-    ready.sort((a,b)=>a.f-b.f);
-    ready.forEach(pkt=>onData({t:"i",f:pkt.f,i:pkt.i}));
-  },[onData,scriptedRemoteMask,simRand]);
-
-  const predictDrawChar=useCallback((g,p,mask,sp,t)=>{
-    const out={...p};
-    if(g.state==="fighting"&&!g.roundEnded&&g.freeze<=0){
-      if(p.hitStun<=0){
-        if(hasBit(mask,IB.L)&&!hasBit(mask,IB.R))out.x-=sp*t;
-        if(hasBit(mask,IB.R)&&!hasBit(mask,IB.L))out.x+=sp*t;
-        if(hasBit(mask,IB.U)&&!p.isJumping)out.y+=(-15)*t;
-      }
-      if(p.vx)out.x+=p.vx*t;
-      if(p.isJumping||p.vy)out.y+=p.vy*t;
-    }
-    out.x=Math.max(10,Math.min(W-CW-10,out.x));
-    out.y=Math.min(GY-CH,out.y);
-    return out;
-  },[]);
-
-  useEffect(()=>{
-    window.__mlDebug={
-      startSim:startSimTest,
-      getState:()=>({
-        screen:screenR.current,
-        role:roleR.current,
-        netMode,
-        simFrame:simFrameR.current,
-        inputFrame:inputFrameR.current,
-        delay:netStatsR.current.delay,
-        stalls:netStatsR.current.stalls,
-        missing:netStatsR.current.lastMissing,
-        p1:{x:G.current.p1.x,y:G.current.p1.y,health:G.current.p1.health},
-        p2:{x:G.current.p2.x,y:G.current.p2.y,health:G.current.p2.health},
-        timer:G.current.timer,
-        ann:G.current.ann
-      })
+  const stepFrame=useCallback((g,p1Mask,p2Mask,fr)=>{
+    const startNextRound=(round,wins)=>{const ng=newGame(round,wins);ng.snd.push("roundStart");return ng};
+    const finishRound=(winner)=>{
+      g.state="ko";g.ann="K.O.!";g.annTimer=150;g.snd.push("ko");
+      if(winner!=="draw")g.wins={...g.wins,[winner]:g.wins[winner]+1};
+      g.nextRoundFrame=fr+150;g.roundEnded=true;
     };
-    window.render_game_to_text=()=>JSON.stringify(window.__mlDebug.getState());
-    return()=>{delete window.__mlDebug;delete window.render_game_to_text};
-  },[netMode,startSimTest]);
 
-  // ─── GAME LOOP ───
+    if(g.rematchEnableFrame!=null&&fr>=g.rematchEnableFrame){
+      g.canRematch=true;
+      g.rematchEnableFrame=null;
+    }
+    if(g.nextRoundFrame!=null&&fr>=g.nextRoundFrame){
+      g.nextRoundFrame=null;
+      if(g.wins.p1>=2||g.wins.p2>=2){
+        g.ann=`${g.wins.p1>=2?CHARS.gandhi.name:CHARS.binladen.name} WINS!`;
+        g.state="gameover";
+        g.annTimer=-1;
+        g.rematchEnableFrame=fr+180;
+        g.snd.push("win");
+      }else{
+        g=startNextRound(g.round+1,g.wins);
+      }
+    }
+
+    if(g.annTimer>0){
+      g.annTimer--;
+      if(g.annTimer===0&&(g.ann==="ROUND 1"||g.ann==="ROUND 2"||g.ann==="FINAL ROUND")){
+        g.ann="FIGHT!";g.annTimer=60;g.snd.push("fight");
+      }else if(g.annTimer===0&&g.ann==="FIGHT!"){
+        g.ann="";
+      }
+    }
+
+    if(g.p1.superDeactivateFrame!=null&&fr>=g.p1.superDeactivateFrame){g.p1.superActive=false;g.p1.superDeactivateFrame=null}
+    if(g.p2.superDeactivateFrame!=null&&fr>=g.p2.superDeactivateFrame){g.p2.superActive=false;g.p2.superDeactivateFrame=null}
+
+    if(g.state==="gameover"&&g.canRematch&&(p1Mask||p2Mask))return startNextRound(1,{p1:0,p2:0});
+
+    if(g.state==="fighting"&&!g.roundEnded){
+      if(g.freeze>0){g.freeze--;}
+      else{
+        if(g.p1.hitStun>0){g.p1.hitStun--}
+        else{
+          if(hasBit(p1Mask,IB.L))g.p1.x-=CHARS.gandhi.sp;
+          if(hasBit(p1Mask,IB.R))g.p1.x+=CHARS.gandhi.sp;
+          if(hasBit(p1Mask,IB.U)&&!g.p1.isJumping){g.p1.vy=-15;g.p1.isJumping=true}
+          g.p1.isBlocking=hasBit(p1Mask,IB.D);
+          if(!g.p1.action||(g.p1.action==="super"&&g.p1.actionTimer<=0)){
+            if(hasBit(p1Mask,IB.P)){g.p1.action="punch";g.p1.actionTimer=12;g.snd.push("punch");attack(g.p1,g.p2,"punch",g)}
+            else if(hasBit(p1Mask,IB.K)){g.p1.action="kick";g.p1.actionTimer=18;g.snd.push("kick");attack(g.p1,g.p2,"kick",g)}
+            else if(hasBit(p1Mask,IB.S)&&g.p1.special>=100){g.p1.action="special";g.p1.actionTimer=30;g.p1.special=0;attack(g.p1,g.p2,"special",g)}
+          }
+          if(hasBit(p1Mask,IB.SU)){
+            if(g.p1.superReady&&!g.p1.superActive&&!g.p1.superUsed){
+              g.p1.superReady=false;g.p1.superActive=true;g.p1.superBoomerangs=2;g.p1.superUsed=true;g.snd.push("boomerang");
+              const d=g.p1.facing;g.projectiles.push({type:"boomerang",owner:"p1",x:g.p1.x+CW/2+d*20,y:g.p1.y+30,dir:d,phase:"out",rotation:0,age:0,hit:false});
+              g.p1.superBoomerangs=1;g.p1.action="super";g.p1.actionTimer=15;
+            }else if(g.p1.superActive&&g.p1.superBoomerangs>0){
+              g.snd.push("boomerang");const d=g.p1.facing;
+              g.projectiles.push({type:"boomerang",owner:"p1",x:g.p1.x+CW/2+d*20,y:g.p1.y+40,dir:d,phase:"out",rotation:1.5,age:0,hit:false});
+              g.p1.superBoomerangs--;g.p1.action="super";g.p1.actionTimer=15;
+              if(g.p1.superBoomerangs<=0)g.p1.superDeactivateFrame=fr+90;
+            }
+          }
+        }
+
+        if(g.p2.hitStun>0){g.p2.hitStun--}
+        else{
+          if(hasBit(p2Mask,IB.L))g.p2.x-=CHARS.binladen.sp;
+          if(hasBit(p2Mask,IB.R))g.p2.x+=CHARS.binladen.sp;
+          if(hasBit(p2Mask,IB.U)&&!g.p2.isJumping){g.p2.vy=-15;g.p2.isJumping=true}
+          g.p2.isBlocking=hasBit(p2Mask,IB.D);
+          if(!g.p2.action||(g.p2.action==="super"&&g.p2.actionTimer<=0)){
+            if(!g.p2.superActive){
+              if(hasBit(p2Mask,IB.P)){g.p2.action="punch";g.p2.actionTimer=12;g.snd.push("punch");attack(g.p2,g.p1,"punch",g)}
+              else if(hasBit(p2Mask,IB.K)){g.p2.action="kick";g.p2.actionTimer=18;g.snd.push("kick");attack(g.p2,g.p1,"kick",g)}
+              else if(hasBit(p2Mask,IB.S)&&g.p2.special>=100){g.p2.action="special";g.p2.actionTimer=30;g.p2.special=0;attack(g.p2,g.p1,"special",g)}
+            }
+          }
+          if(hasBit(p2Mask,IB.SU)){
+            if(g.p2.superReady&&!g.p2.superActive&&!g.p2.superUsed){
+              g.p2.superReady=false;g.p2.superActive=true;g.p2.superBullets=5;g.p2.superUsed=true;g.snd.push("rocketLaunch");
+              const d=g.p2.facing;g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
+              g.p2.superBullets=4;g.p2.action="super";g.p2.actionTimer=10;
+            }else if(g.p2.superActive&&g.p2.superBullets>0){
+              g.snd.push("rocketLaunch");const d=g.p2.facing;
+              g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
+              g.p2.superBullets--;g.p2.action="super";g.p2.actionTimer=10;
+              if(g.p2.superBullets<=0)g.p2.superDeactivateFrame=fr+18;
+            }
+          }
+        }
+
+        for(const p of[g.p1,g.p2]){
+          p.vy+=1.0;p.y+=p.vy;
+          if(p.y>=GY-CH){p.y=GY-CH;p.vy=0;p.isJumping=false}
+          if(p.vx){p.x+=p.vx;p.vx*=0.75;if(Math.abs(p.vx)<0.5)p.vx=0}
+          p.x=Math.max(10,Math.min(W-CW-10,p.x));
+          if(p.actionTimer>0){p.actionTimer--;if(p.actionTimer<=0&&(p.action!=="super"||!p.superActive))p.action=null}
+          if(p.comboTimer>0){p.comboTimer--;if(p.comboTimer<=0)p.combo=0}
+        }
+      }
+
+      g.p1.facing=g.p1.x<g.p2.x?1:-1;g.p2.facing=g.p2.x<g.p1.x?1:-1;
+      const ol=CW-Math.abs(g.p1.x-g.p2.x);
+      if(ol>0&&Math.abs(g.p1.y-g.p2.y)<CH){const pu=ol/2;if(g.p1.x<g.p2.x){g.p1.x-=pu;g.p2.x+=pu}else{g.p1.x+=pu;g.p2.x-=pu}}
+      g.p1.special=Math.min(100,g.p1.special+.05);g.p2.special=Math.min(100,g.p2.special+.05);
+      updProj(g);
+
+      g.timerAcc++;
+      if(g.timerAcc>=60){g.timerAcc=0;if(g.timer>0)g.timer--}
+      if(g.timer<=0&&!g.roundEnded)finishRound(g.p1.health>g.p2.health?"p1":g.p2.health>g.p1.health?"p2":"draw");
+      if(!g.roundEnded){
+        if(g.p1.health<=0)finishRound("p2");
+        else if(g.p2.health<=0)finishRound("p1");
+      }
+      if(fr%120===0)g.snd.push("bgDrone");
+    }
+
+    g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
+    if(g.shake>0)g.shake--;
+    if(g.flash>0)g.flash--;
+    return g;
+  },[attack]);
+
+  const rollbackFromFrame=useCallback((fromFrame)=>{
+    const snapshot=stateHistoryR.current.get(fromFrame);
+    const localRole=roleR.current;
+    if(!snapshot||!localRole)return;
+    let state=cloneGameState(snapshot);
+    let remoteMask=fromFrame>0?(usedRemoteInputsR.current.get(fromFrame-1)??0):0;
+    for(let f=fromFrame;f<simFrameR.current;f++){
+      const localMask=localInputsR.current.get(f)??0;
+      if(remoteInputsR.current.has(f))remoteMask=remoteInputsR.current.get(f);
+      stateHistoryR.current.set(f,cloneGameState(state));
+      usedRemoteInputsR.current.set(f,remoteMask);
+      const p1Mask=localRole==="p1"?localMask:remoteMask;
+      const p2Mask=localRole==="p2"?localMask:remoteMask;
+      state.snd=[];
+      state=stepFrame(state,p1Mask,p2Mask,f);
+      state.snd=[];
+    }
+    G.current=state;
+    lastRemoteMaskR.current=remoteMask;
+    const vis=captureVisualState(state);
+    visR.current={prev:visR.current.curr||vis,curr:vis};
+    trimHistory(simFrameR.current);
+  },[stepFrame,trimHistory]);
+
+  const onData=useCallback((d)=>{
+    if(d?.t==="ready"){
+      remoteReadyR.current=true;
+      if(startAtR.current==null)startAtR.current=performance.now()+SYNC_START_DELAY_MS;
+      return;
+    }
+    if(d.t!=="i"||typeof d.f!=="number")return;
+    const frame=d.f|0,mask=d.i|0;
+    remoteInputsR.current.set(frame,mask);
+    latestRemoteFrameR.current=Math.max(latestRemoteFrameR.current,frame);
+    if(startAtR.current==null)startAtR.current=performance.now()+SYNC_START_DELAY_MS;
+    const usedMask=usedRemoteInputsR.current.get(frame);
+    if(frame<simFrameR.current&&usedMask!=null&&usedMask!==mask)rollbackFromFrame(frame);
+  },[rollbackFromFrame]);
+
+  const setupConn=useCallback((conn)=>{
+    connR.current=conn;
+    conn.on("open",()=>{
+      sfx.init();sfx.connect();
+      resetSession();
+      try{conn.send({t:"ready"})}catch(e){}
+      setScreen("fight");setStatus("");
+    });
+    conn.on("data",onData);
+    conn.on("close",()=>{setScreen("dc");setStatus("Opponent disconnected")});
+    conn.on("error",e=>{console.error("Conn error:",e);setStatus("Error: "+e.type)});
+  },[onData,resetSession]);
+
+  const create=useCallback(()=>{
+    sfx.init();
+    const code=String(Math.floor(1000+Math.random()*9000));
+    roleR.current="p1";
+    setRoomCode(code);setRole("p1");
+    setScreen("waiting");setStatus("Creating...");
+    const peer=new Peer("ML-"+code);peerR.current=peer;
+    peer.on("open",()=>setStatus("Waiting for opponent... Code: "+code));
+    peer.on("connection",c=>setupConn(c));
+    peer.on("error",e=>{if(e.type==="unavailable-id"){setStatus("Code taken");setScreen("lobby")}else setStatus("Error: "+e.type)});
+  },[setupConn]);
+
+  const join=useCallback((code)=>{
+    if(!code||code.length!==4)return;
+    sfx.init();
+    roleR.current="p2";
+    setRole("p2");
+    setScreen("waiting");setStatus("Connecting...");
+    const peer=new Peer(undefined);peerR.current=peer;
+    peer.on("open",()=>{
+      const c=peer.connect("ML-"+code,{reliable:true});
+      setupConn(c);
+      setTimeout(()=>{if(!connR.current?.open){setStatus("Room not found");setScreen("lobby")}},8000);
+    });
+    peer.on("error",e=>{setStatus(e.type==="peer-unavailable"?"Room not found":"Error: "+e.type);setScreen("lobby")});
+  },[setupConn]);
+
+  useEffect(()=>()=>{connR.current?.close();peerR.current?.destroy()},[]);
+
   useEffect(()=>{
-    if(screen!=="fight")return;
+    if(screen!=="fight"||!role)return;
     const cv=cvR.current;if(!cv)return;
     const ctx=cv.getContext("2d");
     let aid;
@@ -565,227 +612,53 @@ function Game(){
       g.snd=[];
     };
 
-    function startNextRound(g,round,wins){
-      const ng=newGame(round,wins);
-      ng.snd.push("roundStart");
-      G.current=ng;
-      return ng;
-    }
-
-    function resolveRoundTransition(g,fr){
-      if(g.rematchEnableFrame!=null&&fr>=g.rematchEnableFrame){
-        g.canRematch=true;
-        g.rematchEnableFrame=null;
+    const advanceSimulation=()=>{
+      const localRole=roleR.current;
+      if(!localRole)return;
+      const frame=simFrameR.current;
+      const localMask=encodeLocalInput();
+      const remoteMask=remoteInputsR.current.has(frame)?remoteInputsR.current.get(frame):lastRemoteMaskR.current;
+      const prevVis=captureVisualState(G.current);
+      localInputsR.current.set(frame,localMask);
+      stateHistoryR.current.set(frame,cloneGameState(G.current));
+      usedRemoteInputsR.current.set(frame,remoteMask);
+      const p1Mask=localRole==="p1"?localMask:remoteMask;
+      const p2Mask=localRole==="p2"?localMask:remoteMask;
+      G.current=stepFrame(G.current,p1Mask,p2Mask,frame);
+      visR.current={prev:prevVis,curr:captureVisualState(G.current)};
+      lastRemoteMaskR.current=remoteMask;
+      simFrameR.current++;
+      trimHistory(simFrameR.current);
+      if(connR.current?.open){
+        try{connR.current.send({t:"i",f:frame,i:localMask})}catch(e){}
       }
-      if(g.nextRoundFrame==null||fr<g.nextRoundFrame)return g;
-      g.nextRoundFrame=null;
-      if(g.wins.p1>=2||g.wins.p2>=2){
-        g.ann=`${g.wins.p1>=2?CHARS.gandhi.name:CHARS.binladen.name} WINS!`;
-        g.state="gameover";
-        g.annTimer=-1;
-        g.rematchEnableFrame=fr+180;
-        g.snd.push("win");
-        return g;
-      }
-      return startNextRound(g,g.round+1,g.wins);
-    }
-
-    function endRound(g,winner,fr){
-      g.state="ko";
-      g.ann="K.O.!";
-      g.annTimer=150;
-      g.snd.push("ko");
-      if(winner!=="draw")g.wins={...g.wins,[winner]:g.wins[winner]+1};
-      g.nextRoundFrame=fr+150;
-      g.roundEnded=true;
-    }
-
-    function stepFrame(g,p1Mask,p2Mask,fr){
-      g=resolveRoundTransition(g,fr);
-
-      if(g.annTimer>0){
-        g.annTimer--;
-        if(g.annTimer===0&&(g.ann==="ROUND 1"||g.ann==="ROUND 2"||g.ann==="FINAL ROUND")){
-          g.ann="FIGHT!";g.annTimer=60;g.snd.push("fight");
-        }else if(g.annTimer===0&&g.ann==="FIGHT!"){
-          g.ann="";
-        }
-      }
-
-      if(g.p1.superDeactivateFrame!=null&&fr>=g.p1.superDeactivateFrame){g.p1.superActive=false;g.p1.superDeactivateFrame=null}
-      if(g.p2.superDeactivateFrame!=null&&fr>=g.p2.superDeactivateFrame){g.p2.superActive=false;g.p2.superDeactivateFrame=null}
-
-      if(g.state==="gameover"&&g.canRematch&&(p1Mask||p2Mask)){
-        return startNextRound(g,1,{p1:0,p2:0});
-      }
-
-      if(g.state==="fighting"&&!g.roundEnded){
-        if(g.freeze>0){g.freeze--;}
-        else{
-          if(g.p1.hitStun>0){g.p1.hitStun--}
-          else{
-            if(hasBit(p1Mask,IB.L))g.p1.x-=CHARS.gandhi.sp;
-            if(hasBit(p1Mask,IB.R))g.p1.x+=CHARS.gandhi.sp;
-            if(hasBit(p1Mask,IB.U)&&!g.p1.isJumping){g.p1.vy=-15;g.p1.isJumping=true}
-            g.p1.isBlocking=hasBit(p1Mask,IB.D);
-            if(!g.p1.action||(g.p1.action==="super"&&g.p1.actionTimer<=0)){
-              if(hasBit(p1Mask,IB.P)){g.p1.action="punch";g.p1.actionTimer=12;g.snd.push("punch");attack(g.p1,g.p2,"punch",g)}
-              else if(hasBit(p1Mask,IB.K)){g.p1.action="kick";g.p1.actionTimer=18;g.snd.push("kick");attack(g.p1,g.p2,"kick",g)}
-              else if(hasBit(p1Mask,IB.S)&&g.p1.special>=100){g.p1.action="special";g.p1.actionTimer=30;g.p1.special=0;attack(g.p1,g.p2,"special",g)}
-            }
-            if(hasBit(p1Mask,IB.SU)){
-              if(g.p1.superReady&&!g.p1.superActive&&!g.p1.superUsed){
-                g.p1.superReady=false;g.p1.superActive=true;g.p1.superBoomerangs=2;g.p1.superUsed=true;g.snd.push("boomerang");
-                const d=g.p1.facing;g.projectiles.push({type:"boomerang",owner:"p1",x:g.p1.x+CW/2+d*20,y:g.p1.y+30,dir:d,phase:"out",rotation:0,age:0,hit:false});
-                g.p1.superBoomerangs=1;g.p1.action="super";g.p1.actionTimer=15;
-              }else if(g.p1.superActive&&g.p1.superBoomerangs>0){
-                g.snd.push("boomerang");const d=g.p1.facing;
-                g.projectiles.push({type:"boomerang",owner:"p1",x:g.p1.x+CW/2+d*20,y:g.p1.y+40,dir:d,phase:"out",rotation:1.5,age:0,hit:false});
-                g.p1.superBoomerangs--;g.p1.action="super";g.p1.actionTimer=15;
-                if(g.p1.superBoomerangs<=0)g.p1.superDeactivateFrame=fr+90;
-              }
-            }
-          }
-
-          if(g.p2.hitStun>0){g.p2.hitStun--}
-          else{
-            if(hasBit(p2Mask,IB.L))g.p2.x-=CHARS.binladen.sp;
-            if(hasBit(p2Mask,IB.R))g.p2.x+=CHARS.binladen.sp;
-            if(hasBit(p2Mask,IB.U)&&!g.p2.isJumping){g.p2.vy=-15;g.p2.isJumping=true}
-            g.p2.isBlocking=hasBit(p2Mask,IB.D);
-            if(!g.p2.action||(g.p2.action==="super"&&g.p2.actionTimer<=0)){
-              if(!g.p2.superActive){
-                if(hasBit(p2Mask,IB.P)){g.p2.action="punch";g.p2.actionTimer=12;g.snd.push("punch");attack(g.p2,g.p1,"punch",g)}
-                else if(hasBit(p2Mask,IB.K)){g.p2.action="kick";g.p2.actionTimer=18;g.snd.push("kick");attack(g.p2,g.p1,"kick",g)}
-                else if(hasBit(p2Mask,IB.S)&&g.p2.special>=100){g.p2.action="special";g.p2.actionTimer=30;g.p2.special=0;attack(g.p2,g.p1,"special",g)}
-              }
-            }
-            if(hasBit(p2Mask,IB.SU)){
-              if(g.p2.superReady&&!g.p2.superActive&&!g.p2.superUsed){
-                g.p2.superReady=false;g.p2.superActive=true;g.p2.superBullets=5;g.p2.superUsed=true;g.snd.push("rocketLaunch");
-                const d=g.p2.facing;g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
-                g.p2.superBullets=4;g.p2.action="super";g.p2.actionTimer=10;
-              }else if(g.p2.superActive&&g.p2.superBullets>0){
-                g.snd.push("rocketLaunch");const d=g.p2.facing;
-                g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
-                g.p2.superBullets--;g.p2.action="super";g.p2.actionTimer=10;
-                if(g.p2.superBullets<=0)g.p2.superDeactivateFrame=fr+18;
-              }
-            }
-          }
-
-          for(const p of[g.p1,g.p2]){
-            p.vy+=1.0;p.y+=p.vy;
-            if(p.y>=GY-CH){p.y=GY-CH;p.vy=0;p.isJumping=false}
-            if(p.vx){p.x+=p.vx;p.vx*=0.75;if(Math.abs(p.vx)<0.5)p.vx=0}
-            p.x=Math.max(10,Math.min(W-CW-10,p.x));
-            if(p.actionTimer>0){p.actionTimer--;if(p.actionTimer<=0&&(p.action!=="super"||!p.superActive))p.action=null}
-            if(p.comboTimer>0){p.comboTimer--;if(p.comboTimer<=0)p.combo=0}
-          }
-        }
-
-        g.p1.facing=g.p1.x<g.p2.x?1:-1;g.p2.facing=g.p2.x<g.p1.x?1:-1;
-        const ol=CW-Math.abs(g.p1.x-g.p2.x);
-        if(ol>0&&Math.abs(g.p1.y-g.p2.y)<CH){const pu=ol/2;if(g.p1.x<g.p2.x){g.p1.x-=pu;g.p2.x+=pu}else{g.p1.x+=pu;g.p2.x-=pu}}
-        g.p1.special=Math.min(100,g.p1.special+.05);g.p2.special=Math.min(100,g.p2.special+.05);
-        updProj(g);
-
-        g.timerAcc++;
-        if(g.timerAcc>=60){g.timerAcc=0;if(g.timer>0)g.timer--}
-        if(g.timer<=0&&!g.roundEnded){
-          const w=g.p1.health>g.p2.health?"p1":g.p2.health>g.p1.health?"p2":"draw";
-          endRound(g,w,fr);
-        }
-        if(!g.roundEnded){
-          if(g.p1.health<=0)endRound(g,"p2",fr);
-          else if(g.p2.health<=0)endRound(g,"p1",fr);
-        }
-        if(fr%120===0)g.snd.push("bgDrone");
-      }
-
-      g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
-      if(g.shake>0)g.shake--;
-      if(g.flash>0)g.flash--;
-      return g;
-    }
+      playQueued(G.current);
+    };
 
     const loop=(ts)=>{
       if(!clockR.current.last)clockR.current.last=ts;
-      const dt=Math.min(100,ts-clockR.current.last);
+      const started=startAtR.current!=null&&ts>=startAtR.current;
+      const dt=started?Math.min(100,ts-clockR.current.last):0;
       clockR.current.last=ts;
       clockR.current.acc+=dt;
-
-      while(clockR.current.acc>=FRAME_MS){
-        const targetFrame=inputFrameR.current+netStatsR.current.delay;
-        const mask=encodeLocalInput();
-        const localRole=roleR.current;
-        if(localRole)inputBufR.current[localRole]?.set(targetFrame,mask);
-        if(netMode==="peer"&&connR.current?.open){
-          try{connR.current.send({t:"i",f:targetFrame,i:mask})}catch(e){}
-        }
-        inputFrameR.current++;
-        clockR.current.acc-=FRAME_MS;
-      }
-      if(netMode==="sim")pumpSimulatedRemote(inputFrameR.current+netStatsR.current.delay+12);
-
-      let simSteps=0;
-      while(simSteps<MAX_SIM_STEPS){
-        const fr=simFrameR.current;
-        const p1Mask=inputBufR.current.p1.get(fr);
-        const p2Mask=inputBufR.current.p2.get(fr);
-        if(p1Mask==null||p2Mask==null){
-          netStatsR.current.lastMissing=p1Mask==null?"p1":"p2";
-          netStatsR.current.stallRenders++;
-          netStatsR.current.stableFrames=0;
-          if(netStatsR.current.stallRenders>=3&&netStatsR.current.delay<MAX_INPUT_DELAY){
-            netStatsR.current.delay++;
-            netStatsR.current.stalls++;
-            netStatsR.current.stallRenders=0;
-          }
+      let steps=0;
+      while(clockR.current.acc>=FRAME_MS&&steps<MAX_SIM_STEPS){
+        if(simFrameR.current>=latestRemoteFrameR.current+1+MAX_PREDICTION_FRAMES){
+          clockR.current.acc=Math.min(clockR.current.acc,FRAME_MS);
           break;
         }
-        inputBufR.current.p1.delete(fr);
-        inputBufR.current.p2.delete(fr);
-        const prevVis=captureVisualState(G.current);
-        let g=stepFrame(G.current,p1Mask,p2Mask,fr);
-        G.current=g;
-        visR.current={prev:prevVis,curr:captureVisualState(g)};
-        appliedMaskR.current={p1:p1Mask,p2:p2Mask};
-        netStatsR.current.lastMissing="";
-        netStatsR.current.stallRenders=0;
-        netStatsR.current.stableFrames++;
-        if(netStatsR.current.stableFrames>=360&&netStatsR.current.delay>MIN_INPUT_DELAY){
-          netStatsR.current.delay--;
-          netStatsR.current.stableFrames=0;
-        }
-        playQueued(g);
-        if((fr+1)%60===0){
-          const hash=hashGameState(g);
-          hashR.current.local.set(fr+1,hash);
-          const remoteHash=hashR.current.remote.get(fr+1);
-          if(remoteHash!=null&&remoteHash!==hash)desyncR.current=`DESYNC DETECTED AT F${fr+1}`;
-          if(netMode==="peer"&&connR.current?.open){
-            try{connR.current.send({t:"h",f:fr+1,h:hash})}catch(e){}
-          }
-        }
-        simFrameR.current++;
-        simSteps++;
+        advanceSimulation();
+        clockR.current.acc-=FRAME_MS;
+        steps++;
       }
 
-      const fr=frameR.current++;
+      const fr=renderFrameR.current++;
       const g=G.current;
-      const myRole=role;
-      const alpha=Math.min(1,clockR.current.acc/FRAME_MS);
-      const nextP1Mask=inputBufR.current.p1.get(simFrameR.current);
-      const nextP2Mask=inputBufR.current.p2.get(simFrameR.current);
-      const stalled=simSteps===0&&(nextP1Mask==null||nextP2Mask==null);
-      const p1Base=visR.current.curr?{...g.p1,x:lerp(visR.current.prev?.p1?.x??g.p1.x,visR.current.curr.p1.x,alpha),y:lerp(visR.current.prev?.p1?.y??g.p1.y,visR.current.curr.p1.y,alpha)}:g.p1;
-      const p2Base=visR.current.curr?{...g.p2,x:lerp(visR.current.prev?.p2?.x??g.p2.x,visR.current.curr.p2.x,alpha),y:lerp(visR.current.prev?.p2?.y??g.p2.y,visR.current.curr.p2.y,alpha)}:g.p2;
-      const p1Draw=stalled?predictDrawChar(g,p1Base,nextP1Mask??appliedMaskR.current.p1,CHARS.gandhi.sp,alpha):p1Base;
-      const p2Draw=stalled?predictDrawChar(g,p2Base,nextP2Mask??appliedMaskR.current.p2,CHARS.binladen.sp,alpha):p2Base;
+      const alpha=started?Math.min(1,clockR.current.acc/FRAME_MS):0;
+      const p1Draw=visR.current.curr?{...g.p1,x:lerp(visR.current.prev?.p1?.x??g.p1.x,visR.current.curr.p1.x,alpha),y:lerp(visR.current.prev?.p1?.y??g.p1.y,visR.current.curr.p1.y,alpha)}:g.p1;
+      const p2Draw=visR.current.curr?{...g.p2,x:lerp(visR.current.prev?.p2?.x??g.p2.x,visR.current.curr.p2.x,alpha),y:lerp(visR.current.prev?.p2?.y??g.p2.y,visR.current.curr.p2.y,alpha)}:g.p2;
       const projDraw=visR.current.curr?blendProjectiles(visR.current.prev?.projectiles,g.projectiles,alpha):g.projectiles;
 
-      // ─── RENDER (both host & client) ───
       ctx.save();
       if(g.shake>0)ctx.translate((Math.random()-.5)*g.shake*3,(Math.random()-.5)*g.shake*3);
       ctx.clearRect(-10,-10,W+20,H+20);
@@ -796,21 +669,16 @@ function Game(){
       for(const e of g.fx)drawFx(ctx,e.x,e.y,e.f,e.t);
       drawHB(ctx,20,18,g.p1.health,g.p1.maxHealth,g.p1.special,CHARS.gandhi.name,CHARS.gandhi.accent,false,g.p1.superReady,g.p1.superActive,"BOOMERANG",g.p1.superBoomerangs);
       drawHB(ctx,500,18,g.p2.health,g.p2.maxHealth,g.p2.special,CHARS.binladen.name,CHARS.binladen.accent,true,g.p2.superReady,g.p2.superActive,"RPG",g.p2.superBullets);
-      // Timer box
       ctx.fillStyle="#111";ctx.fillRect(W/2-30,14,60,35);ctx.strokeStyle="#e8a926";ctx.lineWidth=2;ctx.strokeRect(W/2-30,14,60,35);
       ctx.fillStyle=g.timer<=10?"#ff3333":"#fff";ctx.font=`bold 18px ${PF}`;ctx.textAlign="center";ctx.fillText(String(g.timer),W/2,40);
       ctx.fillStyle="#888";ctx.font=`8px ${PF}`;ctx.fillText(`ROUND ${g.round}`,W/2,62);
-      // Win dots
       for(let i=0;i<2;i++){ctx.fillStyle=i<g.wins.p1?"#e8a926":"#333";ctx.beginPath();ctx.arc(330+i*15,59,4,0,Math.PI*2);ctx.fill()}
       for(let i=0;i<2;i++){ctx.fillStyle=i<g.wins.p2?"#c0392b":"#333";ctx.beginPath();ctx.arc(455+i*15,59,4,0,Math.PI*2);ctx.fill()}
-      // YOU indicator at bottom center
-      const youTxt=myRole==="p1"?"← YOU: GANDHI":"YOU: BIN LADEN →";
+      const youTxt=role==="p1"?"← YOU: GANDHI":"YOU: BIN LADEN →";
       ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fillRect(W/2-100,H-18,200,16);
-      ctx.fillStyle=myRole==="p1"?"#e8a926":"#c0392b";ctx.font=`bold 8px ${PF}`;ctx.textAlign="center";
+      ctx.fillStyle=role==="p1"?"#e8a926":"#c0392b";ctx.font=`bold 8px ${PF}`;ctx.textAlign="center";
       ctx.fillText(youTxt,W/2,H-7);
-      // Hit flash overlay
       if(g.flash>0){ctx.fillStyle=`rgba(255,255,255,${g.flash*0.15})`;ctx.fillRect(0,0,W,H)}
-      // Combo counter
       for(const p of[g.p1,g.p2]){if(p.combo>=2&&p.comboTimer>0){
         const a=Math.min(1,p.comboTimer/30);
         ctx.save();ctx.globalAlpha=a;ctx.fillStyle=p.combo>=5?"#ff4444":p.combo>=3?"#ffaa00":"#fff";
@@ -818,7 +686,6 @@ function Game(){
         ctx.fillText(`${p.combo} HIT${p.combo>1?"S":""}!`,p===g.p1?g.p2.x+CW/2:g.p1.x+CW/2,p===g.p1?g.p2.y-10:g.p1.y-10);
         ctx.restore();
       }}
-      // Announcement overlay
       if(g.ann){
         ctx.fillStyle="rgba(0,0,0,0.6)";ctx.fillRect(0,H/2-40,W,80);
         ctx.fillStyle="#fff";ctx.font=`bold 28px ${PF}`;ctx.textAlign="center";
@@ -828,30 +695,14 @@ function Game(){
           ctx.fillText("TAP ANY BUTTON FOR REMATCH",W/2,H/2+35);
         }
       }
-      if(desyncR.current){
-        ctx.fillStyle="rgba(120,0,0,0.75)";ctx.fillRect(W/2-135,76,270,20);
-        ctx.fillStyle="#ff6666";ctx.font=`8px ${PF}`;ctx.textAlign="center";
-        ctx.fillText(desyncR.current,W/2,90);
-      }
-      ctx.fillStyle="rgba(0,0,0,0.65)";ctx.fillRect(8,H-48,220,40);
-      ctx.fillStyle="#8cf";ctx.font=`7px ${PF}`;ctx.textAlign="left";
-      ctx.fillText(`${netMode==="sim"?"SIM":"NET"} DELAY ${netStatsR.current.delay}F  STALLS ${netStatsR.current.stalls}`,14,H-31);
-      ctx.fillStyle="#aaa";
-      ctx.fillText(`SIM ${simFrameR.current} IN ${inputFrameR.current} MISS ${netStatsR.current.lastMissing||"-"}`,14,H-18);
-      if(netMode==="sim"){
-        ctx.fillStyle="#e8a926";
-        ctx.fillText(`SIM LINK ${netStatsR.current.simBase}F +/-${netStatsR.current.simJitter}F`,14,H-5);
-      }
-      if(debugOutR.current&&window.render_game_to_text)debugOutR.current.textContent=window.render_game_to_text();
       ctx.restore();
       aid=requestAnimationFrame(loop);
     };
 
     aid=requestAnimationFrame(loop);
     return()=>cancelAnimationFrame(aid);
-  },[encodeLocalInput,netMode,predictDrawChar,pumpSimulatedRemote,role,screen]);
+  },[encodeLocalInput,role,screen,stepFrame,trimHistory]);
 
-  // ─── MOBILE BUTTON HANDLERS ───
   const vib=(ms)=>{try{navigator.vibrate?.(ms)}catch(e){}};
   const hold=(key,down)=>{sfx.init();if(down)vib(15);btnDown.current={...btnDown.current,[key]:down}};
   const tap=(key)=>{sfx.init();vib(25);btnTap.current={...btnTap.current,[key]:true}};
@@ -860,7 +711,7 @@ function Game(){
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();navigator.vibrate&&navigator.vibrate(18);hold(k,true)}}
       onTouchEnd={e=>{e.preventDefault();e.stopPropagation();hold(k,false)}}
-      onTouchCancel={e=>{hold(k,false)}}
+      onTouchCancel={()=>hold(k,false)}
       onMouseDown={()=>hold(k,true)}
       onMouseUp={()=>hold(k,false)}
       onMouseLeave={()=>hold(k,false)}
@@ -876,18 +727,13 @@ function Game(){
   );
 
   const cpLink=()=>{navigator.clipboard?.writeText(`${location.origin}${location.pathname}?room=${roomCode}`).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000)})};
-
-  // Mobile keys: P1 uses keyboard keys directly, P2 uses generic _keys
   const mk=role==="p1"
     ?{u:"w",d:"s",l:"a",r:"d",p:"f",k:"g",s:"h",su:"t"}
     :{u:"_up",d:"_down",l:"_left",r:"_right",p:"_punch",k:"_kick",s:"_special",su:"_super"};
   const mc=role==="p1"?"#e8a926":"#c0392b";
-  const mn=role==="p1"?"GANDHI":"BIN LADEN";
   const bs={fontFamily:PF,cursor:"pointer",border:"none",borderRadius:8,fontWeight:"bold"};
 
   return(<div style={{background:"#000",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:PF,padding:8}}>
-    <pre id="debug-output" ref={debugOutR} style={{display:"none"}}/>
-
     {screen==="splash"&&<div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"#000",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:100,padding:16}}>
       <div style={{color:"#ff2222",fontSize:28,marginBottom:6,textShadow:"0 0 30px #ff4444"}}>MORTAL</div>
       <div style={{color:"#ff2222",fontSize:28,marginBottom:20,textShadow:"0 0 30px #ff4444"}}>LEGENDS</div>
@@ -919,7 +765,6 @@ function Game(){
       <div style={{color:"#ff2222",fontSize:20,marginBottom:12,textShadow:"0 0 20px #ff4444"}}>LEGENDS</div>
       <div style={{color:"#e8a926",fontSize:8,marginBottom:24}}>ONLINE MULTIPLAYER</div>
       <button onClick={create} style={{...bs,width:"100%",padding:"14px 0",fontSize:11,color:"#000",background:"#e8a926",marginBottom:14}}>CREATE ROOM (P1)</button>
-      <button onClick={startSimTest} style={{...bs,width:"100%",padding:"12px 0",fontSize:9,color:"#8cf",background:"transparent",border:"1.5px solid #8cf6",marginBottom:14}}>SIMULATED 2-DEVICE TEST</button>
       <div style={{color:"#888",fontSize:8,marginBottom:10}}>— OR JOIN —</div>
       <input value={joinCode} onChange={e=>setJoinCode(e.target.value.replace(/[^0-9]/g,"").slice(0,4))} onKeyDown={e=>{if(e.key==="Enter"&&joinCode.length===4)join(joinCode)}} placeholder="0000" maxLength={4} inputMode="numeric" style={{width:"100%",padding:14,fontSize:22,fontFamily:PF,background:"#111",border:"2px solid #444",borderRadius:8,color:"#fff",textAlign:"center",letterSpacing:10,marginBottom:8}}/>
       <button onClick={()=>join(joinCode)} disabled={joinCode.length!==4} style={{...bs,width:"100%",padding:"14px 0",fontSize:11,color:joinCode.length===4?"#fff":"#666",background:joinCode.length===4?"#c0392b":"#333"}}>JOIN ROOM (P2)</button>
@@ -951,11 +796,9 @@ function Game(){
           <div className="fight-wrap" onTouchStart={()=>{sfx.init();if(!isIOS)goFS()}}>
             <canvas ref={cvR} width={W} height={H}/>
           </div>
-          {/* Fullscreen toggle - only show on browsers that support it (not iOS Safari) */}
           {!isIOS?
             <button onClick={()=>{if(isFS)exitFS();else goFS()}} style={{position:"fixed",top:8,right:8,zIndex:30,padding:"6px 14px",borderRadius:16,border:"1.5px solid rgba(255,255,255,0.3)",background:"rgba(0,0,0,0.7)",color:"#fff",fontSize:10,fontFamily:PF,display:"flex",alignItems:"center",gap:6,touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}><span style={{fontSize:14}}>{isFS?"✕":"⛶"}</span>{isFS?"EXIT":"FULL"}</button>
           :null}
-          {/* LEFT: D-pad */}
           <div style={{position:"fixed",bottom:6,left:6,zIndex:20}}>
             <div style={{position:"relative",width:175,height:175}}>
               <div style={{position:"absolute",top:12,left:12,width:150,height:150,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
@@ -965,7 +808,6 @@ function Game(){
               <div style={{position:"absolute",top:56,right:0}}><Btn label="▷" k={mk.r} color={mc} sz={62}/></div>
             </div>
           </div>
-          {/* RIGHT: Attack diamond */}
           <div style={{position:"fixed",bottom:6,right:6,zIndex:20}}>
             <div style={{position:"relative",width:175,height:175}}>
               <div style={{position:"absolute",top:12,left:12,width:150,height:150,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
@@ -991,7 +833,7 @@ function Game(){
   </div>);
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<Game/>);
+ReactDOM.createRoot(document.getElementById("root")).render(<ActiveGame/>);
 </script>
 </body>
 </html>
