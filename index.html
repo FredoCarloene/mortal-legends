@@ -54,11 +54,12 @@ function exitFS(){
   }catch(e){}
 }
 function isFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement)}
-const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,INPUT_DELAY=3;
+const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,INPUT_DELAY=6,MAX_SIM_STEPS=2;
 const IB={L:1,R:2,U:4,D:8,P:16,K:32,S:64,SU:128};
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:3,kd:5,sd:14,sp:3.2,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:3,sd:10,sp:4.5,br:0.75}};
 const PF="'Press Start 2P',monospace";
 const hasBit=(mask,bit)=>(mask&bit)!==0;
+const lerp=(a,b,t)=>a+(b-a)*t;
 function hashGameState(g){
   const vals=[
     g.p1.x,g.p1.y,g.p1.vx,g.p1.vy,g.p1.health,g.p1.special,g.p1.hitStun,g.p1.combo,g.p1.superActive?1:0,g.p1.superBullets,g.p1.superBoomerangs,
@@ -72,6 +73,21 @@ function hashGameState(g){
     h=Math.imul(h,16777619)>>>0;
   }
   return h>>>0;
+}
+function captureVisualState(g){
+  return{
+    p1:{x:g.p1.x,y:g.p1.y},
+    p2:{x:g.p2.x,y:g.p2.y},
+    projectiles:g.projectiles.map(p=>({type:p.type,owner:p.owner,x:p.x,y:p.y,rotation:p.rotation||0}))
+  };
+}
+function blendProjectiles(prev,curr,t){
+  if(!prev||prev.length!==curr.length)return curr;
+  return curr.map((p,i)=>{
+    const a=prev[i];
+    if(!a||a.type!==p.type||a.owner!==p.owner)return p;
+    return{...p,x:lerp(a.x,p.x,t),y:lerp(a.y,p.y,t),rotation:lerp(a.rotation||0,p.rotation||0,t)};
+  });
 }
 
 // SFX
@@ -246,6 +262,7 @@ function Game(){
   const clockR=useRef({last:0,acc:0});
   const desyncR=useRef("");
   const roleR=useRef(null);
+  const visR=useRef({prev:null,curr:null});
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const c=p.get("room");if(c&&c.length===4)setJoinCode(c)},[]);
@@ -268,6 +285,8 @@ function Game(){
 
   const resetSession=useCallback(()=>{
     G.current=newGame();
+    const vis=captureVisualState(G.current);
+    visR.current={prev:vis,curr:vis};
     frameR.current=0;
     simFrameR.current=INPUT_DELAY;
     inputFrameR.current=0;
@@ -594,15 +613,17 @@ function Game(){
       }
 
       let simSteps=0;
-      while(simSteps<6){
+      while(simSteps<MAX_SIM_STEPS){
         const fr=simFrameR.current;
         const p1Mask=inputBufR.current.p1.get(fr);
         const p2Mask=inputBufR.current.p2.get(fr);
         if(p1Mask==null||p2Mask==null)break;
         inputBufR.current.p1.delete(fr);
         inputBufR.current.p2.delete(fr);
+        const prevVis=captureVisualState(G.current);
         let g=stepFrame(G.current,p1Mask,p2Mask,fr);
         G.current=g;
+        visR.current={prev:prevVis,curr:captureVisualState(g)};
         playQueued(g);
         if((fr+1)%60===0){
           const hash=hashGameState(g);
@@ -620,15 +641,19 @@ function Game(){
       const fr=frameR.current++;
       const g=G.current;
       const myRole=role;
+      const alpha=Math.min(1,clockR.current.acc/FRAME_MS);
+      const p1Draw=visR.current.curr?{...g.p1,x:lerp(visR.current.prev?.p1?.x??g.p1.x,visR.current.curr.p1.x,alpha),y:lerp(visR.current.prev?.p1?.y??g.p1.y,visR.current.curr.p1.y,alpha)}:g.p1;
+      const p2Draw=visR.current.curr?{...g.p2,x:lerp(visR.current.prev?.p2?.x??g.p2.x,visR.current.curr.p2.x,alpha),y:lerp(visR.current.prev?.p2?.y??g.p2.y,visR.current.curr.p2.y,alpha)}:g.p2;
+      const projDraw=visR.current.curr?blendProjectiles(visR.current.prev?.projectiles,g.projectiles,alpha):g.projectiles;
 
       // ─── RENDER (both host & client) ───
       ctx.save();
       if(g.shake>0)ctx.translate((Math.random()-.5)*g.shake*3,(Math.random()-.5)*g.shake*3);
       ctx.clearRect(-10,-10,W+20,H+20);
       drawStage(ctx,fr);
-      drawChar(ctx,g.p1,g.p1.facing,fr,g.p1.action,g.p1.isBlocking,g.p1.superReady,g.p1.superActive,0,g.p1.superBoomerangs);
-      drawChar(ctx,g.p2,g.p2.facing,fr,g.p2.action,g.p2.isBlocking,g.p2.superReady,g.p2.superActive,g.p2.superBullets,0);
-      drawProj(ctx,g.projectiles,fr);
+      drawChar(ctx,p1Draw,g.p1.facing,fr,g.p1.action,g.p1.isBlocking,g.p1.superReady,g.p1.superActive,0,g.p1.superBoomerangs);
+      drawChar(ctx,p2Draw,g.p2.facing,fr,g.p2.action,g.p2.isBlocking,g.p2.superReady,g.p2.superActive,g.p2.superBullets,0);
+      drawProj(ctx,projDraw,fr);
       for(const e of g.fx)drawFx(ctx,e.x,e.y,e.f,e.t);
       drawHB(ctx,20,18,g.p1.health,g.p1.maxHealth,g.p1.special,CHARS.gandhi.name,CHARS.gandhi.accent,false,g.p1.superReady,g.p1.superActive,"BOOMERANG",g.p1.superBoomerangs);
       drawHB(ctx,500,18,g.p2.health,g.p2.maxHealth,g.p2.special,CHARS.binladen.name,CHARS.binladen.accent,true,g.p2.superReady,g.p2.superActive,"RPG",g.p2.superBullets);
