@@ -54,7 +54,7 @@ function exitFS(){
   }catch(e){}
 }
 function isFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement)}
-const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,INPUT_DELAY=6,MAX_SIM_STEPS=2;
+const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,INPUT_DELAY=6,MIN_INPUT_DELAY=4,MAX_INPUT_DELAY=10,MAX_SIM_STEPS=1;
 const IB={L:1,R:2,U:4,D:8,P:16,K:32,S:64,SU:128};
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:3,kd:5,sd:14,sp:3.2,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:3,sd:10,sp:4.5,br:0.75}};
 const PF="'Press Start 2P',monospace";
@@ -88,6 +88,9 @@ function blendProjectiles(prev,curr,t){
     if(!a||a.type!==p.type||a.owner!==p.owner)return p;
     return{...p,x:lerp(a.x,p.x,t),y:lerp(a.y,p.y,t),rotation:lerp(a.rotation||0,p.rotation||0,t)};
   });
+}
+function mkNetStats(){
+  return{delay:INPUT_DELAY,stalls:0,stallRenders:0,stableFrames:0,lastMissing:"",simBase:4,simJitter:2};
 }
 
 // SFX
@@ -246,6 +249,7 @@ function Game(){
   const[joinCode,setJoinCode]=useState("");
   const[role,setRole]=useState(null); // "p1"|"p2"
   const[status,setStatus]=useState("");
+  const[netMode,setNetMode]=useState("peer"); // peer|sim
   const[isMobile,setIsMobile]=useState(false);
   const[copied,setCopied]=useState(false);
   const[isFS,setIsFS]=useState(false);
@@ -263,9 +267,15 @@ function Game(){
   const desyncR=useRef("");
   const roleR=useRef(null);
   const visR=useRef({prev:null,curr:null});
+  const netStatsR=useRef(mkNetStats());
+  const simNetR=useRef(null);
+  const screenR=useRef("splash");
+  const debugOutR=useRef(null);
+  const appliedMaskR=useRef({p1:0,p2:0});
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const c=p.get("room");if(c&&c.length===4)setJoinCode(c)},[]);
+  useEffect(()=>{screenR.current=screen},[screen]);
   useEffect(()=>{roleR.current=role},[role]);
   useEffect(()=>{
     const fn=()=>setIsFS(isFullscreen());
@@ -284,17 +294,22 @@ function Game(){
   const G=useRef(newGame());
 
   const resetSession=useCallback(()=>{
+    const p1Buf=new Map();
+    const p2Buf=new Map();
+    for(let f=0;f<INPUT_DELAY;f++){p1Buf.set(f,0);p2Buf.set(f,0)}
     G.current=newGame();
     const vis=captureVisualState(G.current);
     visR.current={prev:vis,curr:vis};
     frameR.current=0;
-    simFrameR.current=INPUT_DELAY;
+    simFrameR.current=0;
     inputFrameR.current=0;
-    inputBufR.current={p1:new Map(),p2:new Map()};
+    inputBufR.current={p1:p1Buf,p2:p2Buf};
     hashR.current={local:new Map(),remote:new Map()};
     clockR.current={last:0,acc:0};
     btnTap.current={};
     desyncR.current="";
+    netStatsR.current=mkNetStats();
+    appliedMaskR.current={p1:0,p2:0};
   },[]);
 
   const encodeLocalInput=useCallback(()=>{
@@ -350,10 +365,29 @@ function Game(){
     conn.on("error",e=>{console.error("Conn error:",e);setStatus("Error: "+e.type)});
   },[onData,resetSession]);
 
+  const startSimTest=useCallback(()=>{
+    roleR.current="p1";
+    setRole("p1");
+    setNetMode("sim");
+    setRoomCode("");
+    setStatus("SIMULATED 2-DEVICE TEST");
+    connR.current=null;
+    simNetR.current={base:4,jitter:2,seed:1337,maxScheduled:-1,pending:[]};
+    sfx.init();
+    resetSession();
+    setScreen("fight");
+  },[resetSession]);
+
+  useEffect(()=>{
+    const p=new URLSearchParams(window.location.search);
+    if(p.get("autostartSim")==="1")startSimTest();
+  },[startSimTest]);
+
   const create=useCallback(()=>{
     sfx.init();
     const code=String(Math.floor(1000+Math.random()*9000));
     roleR.current="p1";
+    setNetMode("peer");
     setRoomCode(code);setRole("p1");
     setScreen("waiting");setStatus("Creating...");
     const peer=new Peer("ML-"+code,{debug:1});peerR.current=peer;
@@ -366,6 +400,7 @@ function Game(){
     if(!code||code.length!==4)return;
     sfx.init();
     roleR.current="p2";
+    setNetMode("peer");
     setRole("p2");
     setScreen("waiting");setStatus("Connecting...");
     const peer=new Peer(undefined,{debug:1});peerR.current=peer;
@@ -436,6 +471,86 @@ function Game(){
       g.fx.push({x:(atk.x+def.x)/2+CW/2,y:atk.y+30,f:0,t:type==="special"?"special":"normal"});
     }
   };
+
+  const simRand=useCallback(()=>{
+    const sim=simNetR.current;
+    if(!sim)return 0;
+    sim.seed=(Math.imul(sim.seed,1664525)+1013904223)>>>0;
+    return sim.seed/4294967296;
+  },[]);
+
+  const scriptedRemoteMask=useCallback((frame)=>{
+    const phase=frame%240;
+    let mask=0;
+    if(phase<70)mask|=IB.L;
+    else if(phase<140)mask|=IB.R;
+    if(phase===24||phase===96||phase===168)mask|=IB.P;
+    if(phase===60||phase===132)mask|=IB.K;
+    if(phase===100||phase===200)mask|=IB.U;
+    if(phase>180&&phase<220)mask|=IB.D;
+    return mask;
+  },[]);
+
+  const pumpSimulatedRemote=useCallback((maxFrame)=>{
+    const sim=simNetR.current;
+    if(!sim)return;
+    netStatsR.current.simBase=sim.base;
+    netStatsR.current.simJitter=sim.jitter;
+    while(sim.maxScheduled<maxFrame){
+      const f=++sim.maxScheduled;
+      const jitter=Math.floor(simRand()*(sim.jitter*2+1))-sim.jitter;
+      const deliverAt=Math.max(0,f-netStatsR.current.delay+sim.base+jitter);
+      sim.pending.push({deliverAt,f,i:scriptedRemoteMask(f)});
+    }
+    if(sim.pending.length===0)return;
+    const ready=[];
+    const future=[];
+    for(const pkt of sim.pending){
+      if(pkt.deliverAt<=inputFrameR.current)ready.push(pkt);
+      else future.push(pkt);
+    }
+    sim.pending=future;
+    ready.sort((a,b)=>a.f-b.f);
+    ready.forEach(pkt=>onData({t:"i",f:pkt.f,i:pkt.i}));
+  },[onData,scriptedRemoteMask,simRand]);
+
+  const predictDrawChar=useCallback((g,p,mask,sp,t)=>{
+    const out={...p};
+    if(g.state==="fighting"&&!g.roundEnded&&g.freeze<=0){
+      if(p.hitStun<=0){
+        if(hasBit(mask,IB.L)&&!hasBit(mask,IB.R))out.x-=sp*t;
+        if(hasBit(mask,IB.R)&&!hasBit(mask,IB.L))out.x+=sp*t;
+        if(hasBit(mask,IB.U)&&!p.isJumping)out.y+=(-15)*t;
+      }
+      if(p.vx)out.x+=p.vx*t;
+      if(p.isJumping||p.vy)out.y+=p.vy*t;
+    }
+    out.x=Math.max(10,Math.min(W-CW-10,out.x));
+    out.y=Math.min(GY-CH,out.y);
+    return out;
+  },[]);
+
+  useEffect(()=>{
+    window.__mlDebug={
+      startSim:startSimTest,
+      getState:()=>({
+        screen:screenR.current,
+        role:roleR.current,
+        netMode,
+        simFrame:simFrameR.current,
+        inputFrame:inputFrameR.current,
+        delay:netStatsR.current.delay,
+        stalls:netStatsR.current.stalls,
+        missing:netStatsR.current.lastMissing,
+        p1:{x:G.current.p1.x,y:G.current.p1.y,health:G.current.p1.health},
+        p2:{x:G.current.p2.x,y:G.current.p2.y,health:G.current.p2.health},
+        timer:G.current.timer,
+        ann:G.current.ann
+      })
+    };
+    window.render_game_to_text=()=>JSON.stringify(window.__mlDebug.getState());
+    return()=>{delete window.__mlDebug;delete window.render_game_to_text};
+  },[netMode,startSimTest]);
 
   // ─── GAME LOOP ───
   useEffect(()=>{
@@ -601,36 +716,55 @@ function Game(){
       clockR.current.acc+=dt;
 
       while(clockR.current.acc>=FRAME_MS){
-        const targetFrame=inputFrameR.current+INPUT_DELAY;
+        const targetFrame=inputFrameR.current+netStatsR.current.delay;
         const mask=encodeLocalInput();
         const localRole=roleR.current;
         if(localRole)inputBufR.current[localRole]?.set(targetFrame,mask);
-        if(connR.current?.open){
+        if(netMode==="peer"&&connR.current?.open){
           try{connR.current.send({t:"i",f:targetFrame,i:mask})}catch(e){}
         }
         inputFrameR.current++;
         clockR.current.acc-=FRAME_MS;
       }
+      if(netMode==="sim")pumpSimulatedRemote(inputFrameR.current+netStatsR.current.delay+12);
 
       let simSteps=0;
       while(simSteps<MAX_SIM_STEPS){
         const fr=simFrameR.current;
         const p1Mask=inputBufR.current.p1.get(fr);
         const p2Mask=inputBufR.current.p2.get(fr);
-        if(p1Mask==null||p2Mask==null)break;
+        if(p1Mask==null||p2Mask==null){
+          netStatsR.current.lastMissing=p1Mask==null?"p1":"p2";
+          netStatsR.current.stallRenders++;
+          netStatsR.current.stableFrames=0;
+          if(netStatsR.current.stallRenders>=3&&netStatsR.current.delay<MAX_INPUT_DELAY){
+            netStatsR.current.delay++;
+            netStatsR.current.stalls++;
+            netStatsR.current.stallRenders=0;
+          }
+          break;
+        }
         inputBufR.current.p1.delete(fr);
         inputBufR.current.p2.delete(fr);
         const prevVis=captureVisualState(G.current);
         let g=stepFrame(G.current,p1Mask,p2Mask,fr);
         G.current=g;
         visR.current={prev:prevVis,curr:captureVisualState(g)};
+        appliedMaskR.current={p1:p1Mask,p2:p2Mask};
+        netStatsR.current.lastMissing="";
+        netStatsR.current.stallRenders=0;
+        netStatsR.current.stableFrames++;
+        if(netStatsR.current.stableFrames>=360&&netStatsR.current.delay>MIN_INPUT_DELAY){
+          netStatsR.current.delay--;
+          netStatsR.current.stableFrames=0;
+        }
         playQueued(g);
         if((fr+1)%60===0){
           const hash=hashGameState(g);
           hashR.current.local.set(fr+1,hash);
           const remoteHash=hashR.current.remote.get(fr+1);
           if(remoteHash!=null&&remoteHash!==hash)desyncR.current=`DESYNC DETECTED AT F${fr+1}`;
-          if(connR.current?.open){
+          if(netMode==="peer"&&connR.current?.open){
             try{connR.current.send({t:"h",f:fr+1,h:hash})}catch(e){}
           }
         }
@@ -642,8 +776,13 @@ function Game(){
       const g=G.current;
       const myRole=role;
       const alpha=Math.min(1,clockR.current.acc/FRAME_MS);
-      const p1Draw=visR.current.curr?{...g.p1,x:lerp(visR.current.prev?.p1?.x??g.p1.x,visR.current.curr.p1.x,alpha),y:lerp(visR.current.prev?.p1?.y??g.p1.y,visR.current.curr.p1.y,alpha)}:g.p1;
-      const p2Draw=visR.current.curr?{...g.p2,x:lerp(visR.current.prev?.p2?.x??g.p2.x,visR.current.curr.p2.x,alpha),y:lerp(visR.current.prev?.p2?.y??g.p2.y,visR.current.curr.p2.y,alpha)}:g.p2;
+      const nextP1Mask=inputBufR.current.p1.get(simFrameR.current);
+      const nextP2Mask=inputBufR.current.p2.get(simFrameR.current);
+      const stalled=simSteps===0&&(nextP1Mask==null||nextP2Mask==null);
+      const p1Base=visR.current.curr?{...g.p1,x:lerp(visR.current.prev?.p1?.x??g.p1.x,visR.current.curr.p1.x,alpha),y:lerp(visR.current.prev?.p1?.y??g.p1.y,visR.current.curr.p1.y,alpha)}:g.p1;
+      const p2Base=visR.current.curr?{...g.p2,x:lerp(visR.current.prev?.p2?.x??g.p2.x,visR.current.curr.p2.x,alpha),y:lerp(visR.current.prev?.p2?.y??g.p2.y,visR.current.curr.p2.y,alpha)}:g.p2;
+      const p1Draw=stalled?predictDrawChar(g,p1Base,nextP1Mask??appliedMaskR.current.p1,CHARS.gandhi.sp,alpha):p1Base;
+      const p2Draw=stalled?predictDrawChar(g,p2Base,nextP2Mask??appliedMaskR.current.p2,CHARS.binladen.sp,alpha):p2Base;
       const projDraw=visR.current.curr?blendProjectiles(visR.current.prev?.projectiles,g.projectiles,alpha):g.projectiles;
 
       // ─── RENDER (both host & client) ───
@@ -694,13 +833,23 @@ function Game(){
         ctx.fillStyle="#ff6666";ctx.font=`8px ${PF}`;ctx.textAlign="center";
         ctx.fillText(desyncR.current,W/2,90);
       }
+      ctx.fillStyle="rgba(0,0,0,0.65)";ctx.fillRect(8,H-48,220,40);
+      ctx.fillStyle="#8cf";ctx.font=`7px ${PF}`;ctx.textAlign="left";
+      ctx.fillText(`${netMode==="sim"?"SIM":"NET"} DELAY ${netStatsR.current.delay}F  STALLS ${netStatsR.current.stalls}`,14,H-31);
+      ctx.fillStyle="#aaa";
+      ctx.fillText(`SIM ${simFrameR.current} IN ${inputFrameR.current} MISS ${netStatsR.current.lastMissing||"-"}`,14,H-18);
+      if(netMode==="sim"){
+        ctx.fillStyle="#e8a926";
+        ctx.fillText(`SIM LINK ${netStatsR.current.simBase}F +/-${netStatsR.current.simJitter}F`,14,H-5);
+      }
+      if(debugOutR.current&&window.render_game_to_text)debugOutR.current.textContent=window.render_game_to_text();
       ctx.restore();
       aid=requestAnimationFrame(loop);
     };
 
     aid=requestAnimationFrame(loop);
     return()=>cancelAnimationFrame(aid);
-  },[encodeLocalInput,role,screen]);
+  },[encodeLocalInput,netMode,predictDrawChar,pumpSimulatedRemote,role,screen]);
 
   // ─── MOBILE BUTTON HANDLERS ───
   const vib=(ms)=>{try{navigator.vibrate?.(ms)}catch(e){}};
@@ -737,6 +886,7 @@ function Game(){
   const bs={fontFamily:PF,cursor:"pointer",border:"none",borderRadius:8,fontWeight:"bold"};
 
   return(<div style={{background:"#000",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:PF,padding:8}}>
+    <pre id="debug-output" ref={debugOutR} style={{display:"none"}}/>
 
     {screen==="splash"&&<div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"#000",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:100,padding:16}}>
       <div style={{color:"#ff2222",fontSize:28,marginBottom:6,textShadow:"0 0 30px #ff4444"}}>MORTAL</div>
@@ -769,6 +919,7 @@ function Game(){
       <div style={{color:"#ff2222",fontSize:20,marginBottom:12,textShadow:"0 0 20px #ff4444"}}>LEGENDS</div>
       <div style={{color:"#e8a926",fontSize:8,marginBottom:24}}>ONLINE MULTIPLAYER</div>
       <button onClick={create} style={{...bs,width:"100%",padding:"14px 0",fontSize:11,color:"#000",background:"#e8a926",marginBottom:14}}>CREATE ROOM (P1)</button>
+      <button onClick={startSimTest} style={{...bs,width:"100%",padding:"12px 0",fontSize:9,color:"#8cf",background:"transparent",border:"1.5px solid #8cf6",marginBottom:14}}>SIMULATED 2-DEVICE TEST</button>
       <div style={{color:"#888",fontSize:8,marginBottom:10}}>— OR JOIN —</div>
       <input value={joinCode} onChange={e=>setJoinCode(e.target.value.replace(/[^0-9]/g,"").slice(0,4))} onKeyDown={e=>{if(e.key==="Enter"&&joinCode.length===4)join(joinCode)}} placeholder="0000" maxLength={4} inputMode="numeric" style={{width:"100%",padding:14,fontSize:22,fontFamily:PF,background:"#111",border:"2px solid #444",borderRadius:8,color:"#fff",textAlign:"center",letterSpacing:10,marginBottom:8}}/>
       <button onClick={()=>join(joinCode)} disabled={joinCode.length!==4} style={{...bs,width:"100%",padding:"14px 0",fontSize:11,color:joinCode.length===4?"#fff":"#666",background:joinCode.length===4?"#c0392b":"#333"}}>JOIN ROOM (P2)</button>
