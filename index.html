@@ -85,6 +85,8 @@ class Sfx{
   superReady(){[800,1000,1200,1600].forEach((f,i)=>setTimeout(()=>this.o("sawtooth",f,.12,.18),i*60))}
   boomerang(){for(let i=0;i<8;i++)setTimeout(()=>this.o("triangle",500+i*60,.1,.15),i*30);this.n(.2,.1)}
   gunshot(){this.n(.12,.4);this.o("square",60,.15,.3);this.o("sawtooth",150,.08,.2)}
+  rocketLaunch(){this.o("sawtooth",80,.3,.35);this.n(.15,.3);setTimeout(()=>this.o("sine",60,.2,.2),50)}
+  rocketExplode(){this.n(.2,.4);this.o("square",40,.3,.3);this.o("sawtooth",100,.15,.25);setTimeout(()=>this.n(.15,.2),80)}
   bgDrone(){if(this.c&&!this.m)this.o("sine",55,2,.04)}
   connect(){this.o("sine",880,.15,.2);setTimeout(()=>this.o("sine",1320,.15,.2),100)}
 }
@@ -99,9 +101,14 @@ function updProj(g){
       else{const ow=p.owner==="p1"?g.p1:g.p2,ox=ow.x+CW/2,dx=ox-p.x;p.x+=dx>0?Math.min(9,dx):Math.max(-9,dx);p.y+=((ow.y+35)-p.y)*.08;p.rotation+=.5;if(Math.abs(dx)<20)return false}
       if(Math.abs(p.x-tx)<35&&Math.abs(p.y-ty)<50&&!p.hit){p.hit=true;const dm=tg.isBlocking?2:10;tg.health=Math.max(0,tg.health-dm);tg.hitStun=12;g.shake=6;g.fx.push({x:tx,y:tg.y+30,f:0,t:"special"});g.snd.push(tg.isBlocking?"block":"hit");(p.owner==="p1"?g.p1:g.p2).dd+=dm}
       return p.age<150;
-    }else if(p.type==="bullet"){
-      p.x+=p.dir*14;
-      if(Math.abs(p.x-tx)<30&&Math.abs(p.y-ty)<45&&!p.hit){p.hit=true;const dm=tg.isBlocking?1:4;tg.health=Math.max(0,tg.health-dm);tg.hitStun=6;g.shake=4;g.fx.push({x:tx,y:tg.y+30,f:0,t:"normal"});g.snd.push(tg.isBlocking?"block":"hit");(p.owner==="p1"?g.p1:g.p2).dd+=dm;return false}
+    }else if(p.type==="rocket"){
+      p.x+=p.dir*6;p.rotation=(p.rotation||0)+0.02*p.dir;
+      if(Math.abs(p.x-tx)<35&&Math.abs(p.y-ty)<50&&!p.hit){p.hit=true;const dm=tg.isBlocking?2:8;tg.health=Math.max(0,tg.health-dm);tg.hitStun=14;g.shake=12;g.flash=4;g.freeze=4;
+        // Knockback from explosion
+        tg.vx=(tg.x>p.x?1:-1)*15;tg.vy=-5;
+        // Explosion effect - multiple particles
+        for(let i=0;i<5;i++)g.fx.push({x:tx+(Math.random()-0.5)*40,y:tg.y+20+(Math.random()-0.5)*30,f:0,t:"special"});
+        g.snd.push(tg.isBlocking?"block":"rocketExplode");(p.owner==="p1"?g.p1:g.p2).dd+=dm;return false}
       return p.x>-20&&p.x<W+20;
     }
     return false;
@@ -109,7 +116,19 @@ function updProj(g){
 }
 
 // Drawing functions
-function drawProj(c,proj,fr){for(const p of proj){if(p.type==="boomerang"){c.save();c.translate(p.x,p.y);c.rotate(p.rotation);c.shadowColor="#e8a926";c.shadowBlur=12;c.fillStyle="#e8a926";c.fillRect(-20,-3,40,6);c.fillStyle="#fff";c.fillRect(-18,-1,8,2);c.fillRect(10,-1,8,2);c.shadowBlur=0;c.fillStyle=`rgba(232,169,38,${.3+Math.sin(fr*.3)*.15})`;c.beginPath();c.arc(0,0,18,0,Math.PI*2);c.fill();c.restore()}else if(p.type==="bullet"){c.save();c.translate(p.x,p.y);c.fillStyle="#ffdd44";c.shadowColor="#ff8800";c.shadowBlur=6;c.fillRect(p.dir>0?-2:-10,-2,12,4);c.fillStyle=`rgba(255,150,50,${Math.max(0,.5-p.age*.03)})`;c.fillRect(p.dir>0?-14:2,-1,10,2);c.shadowBlur=0;c.restore()}}}
+function drawProj(c,proj,fr){for(const p of proj){if(p.type==="boomerang"){c.save();c.translate(p.x,p.y);c.rotate(p.rotation);c.shadowColor="#e8a926";c.shadowBlur=12;c.fillStyle="#e8a926";c.fillRect(-20,-3,40,6);c.fillStyle="#fff";c.fillRect(-18,-1,8,2);c.fillRect(10,-1,8,2);c.shadowBlur=0;c.fillStyle=`rgba(232,169,38,${.3+Math.sin(fr*.3)*.15})`;c.beginPath();c.arc(0,0,18,0,Math.PI*2);c.fill();c.restore()}else if(p.type==="rocket"){c.save();c.translate(p.x,p.y);
+  // Flame trail
+  const fl=4+Math.sin(fr*.5)*3;
+  c.fillStyle=`rgba(255,100,0,${.7+Math.sin(fr*.4)*.2})`;c.beginPath();c.moveTo(p.dir>0?-10:-10,0);c.lineTo(p.dir>0?-24-fl:24+fl,-4-Math.random()*3);c.lineTo(p.dir>0?-24-fl:24+fl,4+Math.random()*3);c.fill();
+  c.fillStyle="#ffcc00";c.beginPath();c.moveTo(p.dir>0?-8:-8,0);c.lineTo(p.dir>0?-16:16,-2);c.lineTo(p.dir>0?-16:16,2);c.fill();
+  // Rocket body
+  c.fillStyle="#555";c.fillRect(-8,-4,16,8);
+  // Nose cone
+  c.fillStyle="#c0392b";c.beginPath();c.moveTo(p.dir>0?8:-8,-4);c.lineTo(p.dir>0?16:-16,0);c.lineTo(p.dir>0?8:-8,4);c.fill();
+  // Fins
+  c.fillStyle="#444";c.fillRect(p.dir>0?-8:-4,-7,5,3);c.fillRect(p.dir>0?-8:-4,4,5,3);
+  c.shadowColor="#ff4400";c.shadowBlur=12;c.fillStyle="rgba(255,80,0,0.4)";c.beginPath();c.arc(0,0,14,0,Math.PI*2);c.fill();c.shadowBlur=0;
+  c.restore()}}}
 
 function drawChar(c,pl,fac,fr,act,blk,sr,sa,sb,sm){
   const{x,y}=pl,isG=pl.id==="gandhi";c.save();c.translate(x+CW/2,y);if(fac===-1)c.scale(-1,1);
@@ -251,9 +270,9 @@ function Game(){
       g.state=d.s;g.ann=d.n||"";g.annTimer=d.nt||0;
       g.round=d.r;g.wins=d.w;g.timer=d.m;g.canRematch=!!d.c;
       g.shake=d.k||0;g.freeze=d.fz||0;g.flash=d.fl||0;
-      g.projectiles=(d.p||[]).map(a=>({type:a[0]===1?"boomerang":"bullet",x:a[1],y:a[2],dir:a[3],phase:a[4]===1?"out":"back",rotation:a[5],age:a[6],hit:!!a[7],owner:a[8]===1?"p1":"p2"}));
+      g.projectiles=(d.p||[]).map(a=>({type:a[0]===1?"boomerang":"rocket",x:a[1],y:a[2],dir:a[3],phase:a[4]===1?"out":"back",rotation:a[5],age:a[6],hit:!!a[7],owner:a[8]===1?"p1":"p2"}));
       g.fx=(d.f||[]).map(a=>({x:a[0],y:a[1],f:a[2],t:a[3]===1?"special":"normal"}));
-      if(d.x)d.x.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
+      if(d.x)d.x.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,rocketLaunch:45,rocketExplode:60,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
     }
   },[]);
 
@@ -486,12 +505,12 @@ function Game(){
             }
             if(p2t&&p2t[";"]){
               if(g.p2.superReady&&!g.p2.superActive&&!g.p2.superUsed){
-                g.p2.superReady=false;g.p2.superActive=true;g.p2.superBullets=5;g.p2.superUsed=true;g.snd.push("gunshot");
-                const d=g.p2.facing;g.projectiles.push({type:"bullet",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
+                g.p2.superReady=false;g.p2.superActive=true;g.p2.superBullets=5;g.p2.superUsed=true;g.snd.push("rocketLaunch");
+                const d=g.p2.facing;g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
                 g.p2.superBullets=4;g.p2.action="super";g.p2.actionTimer=10;
               }else if(g.p2.superActive&&g.p2.superBullets>0){
-                g.snd.push("gunshot");const d=g.p2.facing;
-                g.projectiles.push({type:"bullet",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
+                g.snd.push("rocketLaunch");const d=g.p2.facing;
+                g.projectiles.push({type:"rocket",owner:"p2",x:g.p2.x+CW/2+d*30,y:g.p2.y+33,dir:d,age:0,hit:false});
                 g.p2.superBullets--;g.p2.action="super";g.p2.actionTimer=10;
                 if(g.p2.superBullets<=0)setTimeout(()=>{g.p2.superActive=false},300);
               }
@@ -539,7 +558,7 @@ function Game(){
         if(g.flash>0)g.flash--;
 
         // Play SFX locally
-        g.snd.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
+        g.snd.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,rocketLaunch:45,rocketExplode:60,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
 
         // Send state to client
         sendCtr++;
@@ -589,7 +608,7 @@ function Game(){
       drawProj(ctx,g.projectiles,fr);
       for(const e of g.fx)drawFx(ctx,e.x,e.y,e.f,e.t);
       drawHB(ctx,20,18,g.p1.health,g.p1.maxHealth,g.p1.special,CHARS.gandhi.name,CHARS.gandhi.accent,false,g.p1.superReady,g.p1.superActive,"BOOMERANG",g.p1.superBoomerangs);
-      drawHB(ctx,500,18,g.p2.health,g.p2.maxHealth,g.p2.special,CHARS.binladen.name,CHARS.binladen.accent,true,g.p2.superReady,g.p2.superActive,"AK-47",g.p2.superBullets);
+      drawHB(ctx,500,18,g.p2.health,g.p2.maxHealth,g.p2.special,CHARS.binladen.name,CHARS.binladen.accent,true,g.p2.superReady,g.p2.superActive,"RPG",g.p2.superBullets);
       // Timer box
       ctx.fillStyle="#111";ctx.fillRect(W/2-30,14,60,35);ctx.strokeStyle="#e8a926";ctx.lineWidth=2;ctx.strokeRect(W/2-30,14,60,35);
       ctx.fillStyle=g.timer<=10?"#ff3333":"#fff";ctx.font=`bold 18px ${PF}`;ctx.textAlign="center";ctx.fillText(String(g.timer),W/2,40);
