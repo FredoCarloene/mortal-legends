@@ -253,7 +253,7 @@ function Game(){
       g.shake=d.k||0;
       g.projectiles=(d.p||[]).map(a=>({type:a[0]===1?"boomerang":"bullet",x:a[1],y:a[2],dir:a[3],phase:a[4]===1?"out":"back",rotation:a[5],age:a[6],hit:!!a[7],owner:a[8]===1?"p1":"p2"}));
       g.fx=(d.f||[]).map(a=>({x:a[0],y:a[1],f:a[2],t:a[3]===1?"special":"normal"}));
-      if(d.x)d.x.forEach(s=>{if(sfx[s])sfx[s]()});
+      if(d.x)d.x.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
     }
   },[]);
 
@@ -512,7 +512,7 @@ function Game(){
         if(g.shake>0)g.shake--;
 
         // Play SFX locally
-        g.snd.forEach(s=>{if(sfx[s])sfx[s]()});
+        g.snd.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
 
         // Send state to client
         sendCtr++;
@@ -614,10 +614,11 @@ function Game(){
   },[screen,role,serialize]);
 
   // ─── MOBILE BUTTON HANDLERS ───
-  const hold=(key,down)=>{sfx.init();btnDown.current={...btnDown.current,[key]:down}};
-  const tap=(key)=>{sfx.init();btnTap.current={...btnTap.current,[key]:true}};
+  const vib=(ms)=>{try{navigator.vibrate?.(ms)}catch(e){}};
+  const hold=(key,down)=>{sfx.init();if(down)vib(15);btnDown.current={...btnDown.current,[key]:down}};
+  const tap=(key)=>{sfx.init();vib(25);btnTap.current={...btnTap.current,[key]:true}};
 
-  const Btn=({label,k,color="#fff",sz=56})=>(
+  const Btn=({label,k,color="#fff",sz=64})=>(
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();hold(k,true)}}
       onTouchEnd={e=>{e.preventDefault();e.stopPropagation();hold(k,false)}}
@@ -625,14 +626,14 @@ function Game(){
       onMouseDown={()=>hold(k,true)}
       onMouseUp={()=>hold(k,false)}
       onMouseLeave={()=>hold(k,false)}
-      style={{width:sz,height:sz,borderRadius:"50%",border:`1.5px solid ${color}40`,background:"rgba(255,255,255,0.06)",color:`${color}cc`,fontFamily:"sans-serif",fontSize:sz*0.36,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
+      style={{width:sz,height:sz,borderRadius:"50%",border:`1.5px solid ${color}40`,background:"rgba(255,255,255,0.06)",color:`${color}cc`,fontFamily:"sans-serif",fontSize:sz*0.34,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
     >{label}</button>
   );
-  const TapBtn=({label,k,color="#fff",sz=56})=>(
+  const TapBtn=({label,k,color="#fff",sz=64})=>(
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();tap(k)}}
       onMouseDown={()=>tap(k)}
-      style={{width:sz,height:sz,borderRadius:"50%",border:`1.5px solid ${color}40`,background:"rgba(255,255,255,0.06)",color:`${color}cc`,fontFamily:"sans-serif",fontSize:sz*0.36,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
+      style={{width:sz,height:sz,borderRadius:"50%",border:`1.5px solid ${color}40`,background:"rgba(255,255,255,0.06)",color:`${color}cc`,fontFamily:"sans-serif",fontSize:sz*0.34,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
     >{label}</button>
   );
 
@@ -715,23 +716,23 @@ function Game(){
             <button onClick={()=>{if(isFS)exitFS();else goFS()}} style={{position:"fixed",top:8,right:8,zIndex:30,padding:"6px 14px",borderRadius:16,border:"1.5px solid rgba(255,255,255,0.3)",background:"rgba(0,0,0,0.7)",color:"#fff",fontSize:10,fontFamily:PF,display:"flex",alignItems:"center",gap:6,touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}><span style={{fontSize:14}}>{isFS?"✕":"⛶"}</span>{isFS?"EXIT":"FULL"}</button>
           :null}
           {/* LEFT: D-pad */}
-          <div style={{position:"fixed",bottom:10,left:10,zIndex:20}}>
-            <div style={{position:"relative",width:140,height:140}}>
-              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
-              <div style={{position:"absolute",top:0,left:45}}><Btn label="△" k={mk.u} color={mc} sz={50}/></div>
-              <div style={{position:"absolute",top:45,left:0}}><Btn label="◁" k={mk.l} color={mc} sz={50}/></div>
-              <div style={{position:"absolute",top:47,left:47}}><Btn label="○" k={mk.d} color={mc} sz={46}/></div>
-              <div style={{position:"absolute",top:45,right:0}}><Btn label="▷" k={mk.r} color={mc} sz={50}/></div>
+          <div style={{position:"fixed",bottom:6,left:6,zIndex:20}}>
+            <div style={{position:"relative",width:175,height:175}}>
+              <div style={{position:"absolute",top:12,left:12,width:150,height:150,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
+              <div style={{position:"absolute",top:0,left:54}}><Btn label="△" k={mk.u} color={mc} sz={62}/></div>
+              <div style={{position:"absolute",top:56,left:0}}><Btn label="◁" k={mk.l} color={mc} sz={62}/></div>
+              <div style={{position:"absolute",top:60,left:60}}><Btn label="○" k={mk.d} color={mc} sz={54}/></div>
+              <div style={{position:"absolute",top:56,right:0}}><Btn label="▷" k={mk.r} color={mc} sz={62}/></div>
             </div>
           </div>
           {/* RIGHT: Attack diamond */}
-          <div style={{position:"fixed",bottom:10,right:10,zIndex:20}}>
-            <div style={{position:"relative",width:140,height:140}}>
-              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
-              <div style={{position:"absolute",top:0,left:45}}><Btn label="K" k={mk.k} color={mc} sz={50}/></div>
-              <div style={{position:"absolute",top:45,left:0}}><Btn label="P" k={mk.p} color={mc} sz={50}/></div>
-              <div style={{position:"absolute",top:45,right:0}}><Btn label="S" k={mk.s} color={mc} sz={50}/></div>
-              <div style={{position:"absolute",bottom:0,left:45}}><TapBtn label="★" k={mk.su} color={mc} sz={50}/></div>
+          <div style={{position:"fixed",bottom:6,right:6,zIndex:20}}>
+            <div style={{position:"relative",width:175,height:175}}>
+              <div style={{position:"absolute",top:12,left:12,width:150,height:150,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
+              <div style={{position:"absolute",top:0,left:54}}><Btn label="K" k={mk.k} color={mc} sz={62}/></div>
+              <div style={{position:"absolute",top:56,left:0}}><Btn label="P" k={mk.p} color={mc} sz={62}/></div>
+              <div style={{position:"absolute",top:56,right:0}}><Btn label="S" k={mk.s} color={mc} sz={62}/></div>
+              <div style={{position:"absolute",bottom:0,left:54}}><TapBtn label="★" k={mk.su} color={mc} sz={62}/></div>
             </div>
           </div>
         </>
