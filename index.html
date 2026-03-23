@@ -15,20 +15,18 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#000;overflow:hidden;-webkit-user-select:none;user-select:none;height:100%;width:100%;position:fixed;top:0;left:0}
-button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-#root{width:100%;height:100%}
-.fight-wrap{position:fixed;top:0;left:0;width:100%;height:100%;background:#000}
+html{height:100%;width:100%;background:#000}
+body{background:#000;overflow:hidden;-webkit-user-select:none;user-select:none;min-height:100vh;min-height:100dvh;width:100%;margin:0;position:relative}
+button{touch-action:manipulation;-webkit-tap-highlight-color:transparent;outline:none}
+#root{width:100%;min-height:100vh;min-height:100dvh}
+.fight-wrap{position:fixed;top:0;left:0;width:100vw;height:100vh;height:100dvh;background:#000}
 .fight-wrap canvas{display:block;width:100%;height:100%}
 .ctrl-layer{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
 .ctrl-layer button{pointer-events:auto}
-.dpad{z-index:20}
-.atk-area{z-index:20}
-.you-label{position:fixed;top:4px;left:50%;transform:translateX(-50%);z-index:20}
-.rotate-msg{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;align-items:center;justify-content:center;flex-direction:column;z-index:99;display:none}
+.rotate-msg{position:fixed;top:0;left:0;width:100vw;height:100vh;height:100dvh;background:#000;align-items:center;justify-content:center;flex-direction:column;z-index:99;display:none}
 @media(orientation:portrait){
   .rotate-msg{display:flex!important}
-  .fight-wrap,.ctrl-layer,.dpad,.atk-grid,.you-label{display:none!important}
+  .fight-wrap,.ctrl-layer{display:none!important}
 }
 </style>
 </head>
@@ -40,13 +38,15 @@ const{useState,useEffect,useRef,useCallback}=React;
 // Fullscreen helper
 function goFS(){
   const el=document.documentElement;
+  // Try Fullscreen API (works on Android Chrome when triggered by button click)
   try{
     if(el.requestFullscreen)el.requestFullscreen({navigationUI:"hide"});
     else if(el.webkitRequestFullscreen)el.webkitRequestFullscreen();
-    else if(el.msRequestFullscreen)el.msRequestFullscreen();
   }catch(e){}
-  // Also lock to landscape if possible
+  // Lock landscape
   try{screen.orientation?.lock?.("landscape").catch(()=>{})}catch(e){}
+  // iOS: scroll trick to hide address bar
+  setTimeout(()=>window.scrollTo(0,1),100);
 }
 const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99;
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:2,kd:4,sd:12,sp:3.8,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:4,sd:12,sp:3.8,br:0.75}};
@@ -634,12 +634,13 @@ function Game(){
 
   return(<div style={{background:"#000",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:PF,padding:8}}>
 
-    {screen==="splash"&&<div onClick={()=>{goFS();sfx.init();setScreen("lobby")}} onTouchStart={()=>{goFS();sfx.init();setScreen("lobby")}} style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"#000",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:100}}>
+    {screen==="splash"&&<div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"#000",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:100}}>
       <div style={{color:"#ff2222",fontSize:28,marginBottom:6,textShadow:"0 0 30px #ff4444"}}>MORTAL</div>
       <div style={{color:"#ff2222",fontSize:28,marginBottom:24,textShadow:"0 0 30px #ff4444"}}>LEGENDS</div>
-      <div style={{color:"#e8a926",fontSize:9,marginBottom:40}}>ONLINE MULTIPLAYER</div>
-      <div style={{color:"#fff",fontSize:12,animation:"pulse 1.5s ease-in-out infinite"}}>TAP TO START</div>
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
+      <div style={{color:"#e8a926",fontSize:9,marginBottom:30}}>ONLINE MULTIPLAYER</div>
+      <button onClick={()=>{goFS();sfx.init();setScreen("lobby")}} style={{...bs,padding:"16px 48px",fontSize:14,color:"#000",background:"#e8a926",borderRadius:30,animation:"pulse 1.5s ease-in-out infinite"}}>TAP TO START</button>
+      <div style={{color:"#555",fontSize:6,marginTop:20,textAlign:"center",lineHeight:2}}>FOR BEST EXPERIENCE:<br/>ADD TO HOME SCREEN ↗</div>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.7}}`}</style>
     </div>}
 
     {screen==="lobby"&&<div style={{maxWidth:400,width:"100%",textAlign:"center",padding:16}}>
