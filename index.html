@@ -54,11 +54,12 @@ function exitFS(){
   }catch(e){}
 }
 function isFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement)}
-const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,MAX_SIM_STEPS=3,ROLLBACK_WINDOW=180,SYNC_START_DELAY_MS=180,MAX_PREDICTION_FRAMES=10;
+const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,MAX_SIM_STEPS=3,ROLLBACK_WINDOW=180,SYNC_START_DELAY_MS=120,MAX_PREDICTION_FRAMES=14,INPUT_PACKET_HISTORY=6,READY_RESEND_MS=250;
 const IB={L:1,R:2,U:4,D:8,P:16,K:32,S:64,SU:128};
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:3,kd:5,sd:14,sp:3.2,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:3,sd:10,sp:4.5,br:0.75}};
 const PF="'Press Start 2P',monospace";
 const ROCKET_FX_OFFSETS=[[-18,-10],[-8,8],[0,0],[10,-6],[18,10]];
+const PK_READY=1,PK_INPUT=2;
 const hasBit=(mask,bit)=>(mask&bit)!==0;
 const lerp=(a,b,t)=>a+(b-a)*t;
 function cloneGameState(g){
@@ -89,6 +90,27 @@ function blendProjectiles(prev,curr,t){
     if(!a||a.type!==p.type||a.owner!==p.owner)return p;
     return{...p,x:lerp(a.x,p.x,t),y:lerp(a.y,p.y,t),rotation:lerp(a.rotation||0,p.rotation||0,t)};
   });
+}
+function makeReadyPacket(){
+  return new Uint8Array([PK_READY]).buffer;
+}
+function makeInputPacket(frame,getMask){
+  const count=Math.min(INPUT_PACKET_HISTORY,frame+1);
+  const buf=new Uint8Array(6+count);
+  const view=new DataView(buf.buffer);
+  buf[0]=PK_INPUT;
+  buf[1]=count;
+  view.setUint32(2,frame);
+  for(let i=0;i<count;i++){
+    const sampleFrame=frame-count+1+i;
+    buf[6+i]=(getMask(sampleFrame)??0)&0xff;
+  }
+  return buf.buffer;
+}
+function asPacketBytes(data){
+  if(data instanceof ArrayBuffer)return new Uint8Array(data);
+  if(ArrayBuffer.isView(data))return new Uint8Array(data.buffer,data.byteOffset,data.byteLength);
+  return null;
 }
 
 // SFX
@@ -267,6 +289,7 @@ function ActiveGame(){
   const latestRemoteFrameR=useRef(-1);
   const remoteReadyR=useRef(false);
   const startAtR=useRef(null);
+  const lastReadySendR=useRef(0);
   const visR=useRef({prev:null,curr:null});
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
@@ -302,6 +325,7 @@ function ActiveGame(){
     latestRemoteFrameR.current=-1;
     remoteReadyR.current=false;
     startAtR.current=null;
+    lastReadySendR.current=0;
     btnTap.current={};
   },[]);
 
@@ -545,27 +569,50 @@ function ActiveGame(){
     trimHistory(simFrameR.current);
   },[stepFrame,trimHistory]);
 
-  const onData=useCallback((d)=>{
-    if(d?.t==="ready"){
+  const onPacketBytes=useCallback((bytes)=>{
+    if(!bytes?.length)return;
+    const kind=bytes[0];
+    if(kind===PK_READY){
       remoteReadyR.current=true;
       if(startAtR.current==null)startAtR.current=performance.now()+SYNC_START_DELAY_MS;
       return;
     }
-    if(d.t!=="i"||typeof d.f!=="number")return;
-    const frame=d.f|0,mask=d.i|0;
-    remoteInputsR.current.set(frame,mask);
-    latestRemoteFrameR.current=Math.max(latestRemoteFrameR.current,frame);
+    if(kind!==PK_INPUT||bytes.length<6)return;
+    const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+    const latestFrame=view.getUint32(2);
+    const count=bytes[1];
+    latestRemoteFrameR.current=Math.max(latestRemoteFrameR.current,latestFrame);
     if(startAtR.current==null)startAtR.current=performance.now()+SYNC_START_DELAY_MS;
-    const usedMask=usedRemoteInputsR.current.get(frame);
-    if(frame<simFrameR.current&&usedMask!=null&&usedMask!==mask)rollbackFromFrame(frame);
+    for(let i=0;i<count;i++){
+      const frame=latestFrame-count+1+i;
+      if(frame<0)continue;
+      const mask=bytes[6+i]|0;
+      remoteInputsR.current.set(frame,mask);
+      const usedMask=usedRemoteInputsR.current.get(frame);
+      if(frame<simFrameR.current&&usedMask!=null&&usedMask!==mask){
+        rollbackFromFrame(frame);
+        break;
+      }
+    }
   },[rollbackFromFrame]);
+
+  const onData=useCallback((d)=>{
+    const bytes=asPacketBytes(d);
+    if(bytes){onPacketBytes(bytes);return;}
+    if(d instanceof Blob){
+      d.arrayBuffer().then(buf=>onPacketBytes(new Uint8Array(buf))).catch(()=>{});
+    }
+  },[onPacketBytes]);
 
   const setupConn=useCallback((conn)=>{
     connR.current=conn;
     conn.on("open",()=>{
       sfx.init();sfx.connect();
       resetSession();
-      try{conn.send({t:"ready"})}catch(e){}
+      startAtR.current=performance.now()+SYNC_START_DELAY_MS;
+      if(conn.dataChannel)conn.dataChannel.binaryType="arraybuffer";
+      try{conn.send(makeReadyPacket())}catch(e){}
+      lastReadySendR.current=performance.now();
       setScreen("fight");setStatus("");
     });
     conn.on("data",onData);
@@ -593,7 +640,7 @@ function ActiveGame(){
     setScreen("waiting");setStatus("Connecting...");
     const peer=new Peer(undefined);peerR.current=peer;
     peer.on("open",()=>{
-      const c=peer.connect("ML-"+code,{reliable:true});
+      const c=peer.connect("ML-"+code,{serialization:"binary",reliable:false});
       setupConn(c);
       setTimeout(()=>{if(!connR.current?.open){setStatus("Room not found");setScreen("lobby")}},8000);
     });
@@ -630,15 +677,16 @@ function ActiveGame(){
       lastRemoteMaskR.current=remoteMask;
       simFrameR.current++;
       trimHistory(simFrameR.current);
-      if(connR.current?.open){
-        try{connR.current.send({t:"i",f:frame,i:localMask})}catch(e){}
-      }
       playQueued(G.current);
     };
 
     const loop=(ts)=>{
       if(!clockR.current.last)clockR.current.last=ts;
       const started=startAtR.current!=null&&ts>=startAtR.current;
+      if(connR.current?.open&&!remoteReadyR.current&&ts-lastReadySendR.current>=READY_RESEND_MS){
+        try{connR.current.send(makeReadyPacket())}catch(e){}
+        lastReadySendR.current=ts;
+      }
       const dt=started?Math.min(100,ts-clockR.current.last):0;
       clockR.current.last=ts;
       clockR.current.acc+=dt;
@@ -648,7 +696,7 @@ function ActiveGame(){
         const localMask=encodeLocalInput();
         localInputsR.current.set(inputFrame,localMask);
         if(connR.current?.open){
-          try{connR.current.send({t:"i",f:inputFrame,i:localMask})}catch(e){}
+          try{connR.current.send(makeInputPacket(inputFrame,frame=>localInputsR.current.get(frame)??0))}catch(e){}
         }
         inputFrameR.current++;
         clockR.current.acc-=FRAME_MS;
