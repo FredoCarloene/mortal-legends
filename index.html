@@ -653,11 +653,8 @@ function Game(){
       <div style={{color:"#ff2222",fontSize:28,marginBottom:20,textShadow:"0 0 30px #ff4444"}}>LEGENDS</div>
       <div style={{color:"#e8a926",fontSize:9,marginBottom:24}}>ONLINE MULTIPLAYER</div>
       <button onClick={()=>{goFS();sfx.init();setScreen("lobby")}} style={{...bs,padding:"16px 48px",fontSize:14,color:"#000",background:"#e8a926",borderRadius:30,animation:"pulse 1.5s ease-in-out infinite",marginBottom:20}}>TAP TO START</button>
-      {!window.matchMedia("(display-mode:standalone)").matches&&isMobile&&<>
-        <button onClick={()=>{
-          if(window._pwaPrompt){window._pwaPrompt.prompt();window._pwaPrompt.userChoice.then(()=>{window._pwaPrompt=null})}
-          else setScreen("install")
-        }} style={{...bs,padding:"10px 28px",fontSize:9,color:"#4ae",background:"transparent",border:"1.5px solid #4ae6",borderRadius:20}}>📲 INSTALL AS APP</button>
+      {!window.matchMedia("(display-mode:standalone)").matches&&isMobile&&isIOS&&<>
+        <button onClick={()=>setScreen("install")} style={{...bs,padding:"10px 28px",fontSize:9,color:"#4ae",background:"transparent",border:"1.5px solid #4ae6",borderRadius:20}}>📲 INSTALL AS APP</button>
         <div style={{color:"#555",fontSize:6,marginTop:10}}>Play fullscreen without browser bars</div>
       </>}
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.7}}`}</style>
@@ -665,25 +662,14 @@ function Game(){
 
     {screen==="install"&&<div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"#000",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}}>
       <div style={{color:"#e8a926",fontSize:14,marginBottom:20}}>INSTALL AS APP</div>
-      {/safari/i.test(navigator.userAgent)&&!/chrome/i.test(navigator.userAgent)?
-        <div style={{color:"#ccc",fontSize:9,textAlign:"center",lineHeight:2.2,maxWidth:320}}>
-          <div style={{fontSize:11,color:"#fff",marginBottom:12}}>Safari (iPhone/iPad)</div>
-          <div style={{background:"#1a1a2a",borderRadius:12,padding:16,marginBottom:8}}>
-            <span style={{color:"#4ae"}}>1.</span> Tap the <span style={{color:"#4ae",fontSize:12}}>⬆</span> Share button below<br/>
-            <span style={{color:"#4ae"}}>2.</span> Scroll down and tap<br/><span style={{color:"#fff"}}>"Add to Home Screen"</span><br/>
-            <span style={{color:"#4ae"}}>3.</span> Tap <span style={{color:"#fff"}}>"Add"</span>
-          </div>
+      <div style={{color:"#ccc",fontSize:9,textAlign:"center",lineHeight:2.2,maxWidth:320}}>
+        <div style={{fontSize:11,color:"#fff",marginBottom:12}}>Safari (iPhone/iPad)</div>
+        <div style={{background:"#1a1a2a",borderRadius:12,padding:16,marginBottom:8}}>
+          <span style={{color:"#4ae"}}>1.</span> Tap the <span style={{color:"#4ae",fontSize:12}}>⬆</span> Share button below<br/>
+          <span style={{color:"#4ae"}}>2.</span> Scroll down and tap<br/><span style={{color:"#fff"}}>"Add to Home Screen"</span><br/>
+          <span style={{color:"#4ae"}}>3.</span> Tap <span style={{color:"#fff"}}>"Add"</span>
         </div>
-      :
-        <div style={{color:"#ccc",fontSize:9,textAlign:"center",lineHeight:2.2,maxWidth:320}}>
-          <div style={{fontSize:11,color:"#fff",marginBottom:12}}>Chrome (Android)</div>
-          <div style={{background:"#1a1a2a",borderRadius:12,padding:16,marginBottom:8}}>
-            <span style={{color:"#4ae"}}>1.</span> Tap <span style={{color:"#fff"}}>⋮</span> menu (top right)<br/>
-            <span style={{color:"#4ae"}}>2.</span> Tap <span style={{color:"#fff"}}>"Add to Home screen"</span><br/>
-            <span style={{color:"#4ae"}}>3.</span> Tap <span style={{color:"#fff"}}>"Add"</span>
-          </div>
-        </div>
-      }
+      </div>
       <div style={{color:"#888",fontSize:7,marginTop:8,marginBottom:16}}>Then open the app from your home screen</div>
       <button onClick={()=>setScreen("splash")} style={{...bs,padding:"10px 28px",fontSize:9,color:"#888",background:"transparent",border:"1px solid #444",borderRadius:20}}>← BACK</button>
     </div>}
