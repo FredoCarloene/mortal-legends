@@ -245,9 +245,11 @@ function Game(){
   const hashR=useRef({local:new Map(),remote:new Map()});
   const clockR=useRef({last:0,acc:0});
   const desyncR=useRef("");
+  const roleR=useRef(null);
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const c=p.get("room");if(c&&c.length===4)setJoinCode(c)},[]);
+  useEffect(()=>{roleR.current=role},[role]);
   useEffect(()=>{
     const fn=()=>setIsFS(isFullscreen());
     document.addEventListener("fullscreenchange",fn);
@@ -263,7 +265,6 @@ function Game(){
   const mkP=(id,x,f)=>({id,x,y:GY-CH,vy:0,vx:0,health:100,maxHealth:100,special:0,action:null,actionTimer:0,facing:f,isJumping:false,isBlocking:false,combo:0,comboTimer:0,hitStun:0,dd:0,superReady:false,superActive:false,superBullets:0,superBoomerangs:0,superUsed:false,superDeactivateFrame:null,lastDir:0,lastDirTime:0});
   const newGame=(round=1,wins={p1:0,p2:0})=>({p1:mkP("gandhi",150,1),p2:mkP("binladen",550,-1),fx:[],shake:0,freeze:0,flash:0,projectiles:[],snd:[],state:"fighting",ann:round===3?"FINAL ROUND":`ROUND ${round}`,annTimer:90,round,wins:{...wins},timer:RT,timerAcc:0,roundEnded:false,canRematch:false,nextRoundFrame:null,rematchEnableFrame:null});
   const G=useRef(newGame());
-  const remoteRole=role==="p1"?"p2":"p1";
 
   const resetSession=useCallback(()=>{
     G.current=newGame();
@@ -280,8 +281,10 @@ function Game(){
   const encodeLocalInput=useCallback(()=>{
     const held=btnDown.current;
     const tap=btnTap.current;
+    const myRole=roleR.current;
+    if(!myRole)return 0;
     let mask=0;
-    if(role==="p1"){
+    if(myRole==="p1"){
       if(held.a||held._left)mask|=IB.L;
       if(held.d||held._right)mask|=IB.R;
       if(held.w||held._up)mask|=IB.U;
@@ -302,10 +305,11 @@ function Game(){
     }
     btnTap.current={};
     return mask;
-  },[role]);
+  },[]);
 
   // ─── NETWORK ───
   const onData=useCallback((d)=>{
+    const remoteRole=roleR.current==="p1"?"p2":"p1";
     if(d.t==="i"&&typeof d.f==="number"){
       inputBufR.current[remoteRole]?.set(d.f,d.i|0);
     }else if(d.t==="h"&&typeof d.f==="number"){
@@ -313,7 +317,7 @@ function Game(){
       const localHash=hashR.current.local.get(d.f);
       if(localHash!=null&&localHash!==(d.h>>>0))desyncR.current=`DESYNC DETECTED AT F${d.f}`;
     }
-  },[remoteRole]);
+  },[]);
 
   const setupConn=useCallback((conn)=>{
     connR.current=conn;
@@ -330,6 +334,7 @@ function Game(){
   const create=useCallback(()=>{
     sfx.init();
     const code=String(Math.floor(1000+Math.random()*9000));
+    roleR.current="p1";
     setRoomCode(code);setRole("p1");
     setScreen("waiting");setStatus("Creating...");
     const peer=new Peer("ML-"+code,{debug:1});peerR.current=peer;
@@ -341,6 +346,7 @@ function Game(){
   const join=useCallback((code)=>{
     if(!code||code.length!==4)return;
     sfx.init();
+    roleR.current="p2";
     setRole("p2");
     setScreen("waiting");setStatus("Connecting...");
     const peer=new Peer(undefined,{debug:1});peerR.current=peer;
@@ -578,7 +584,8 @@ function Game(){
       while(clockR.current.acc>=FRAME_MS){
         const targetFrame=inputFrameR.current+INPUT_DELAY;
         const mask=encodeLocalInput();
-        inputBufR.current[role]?.set(targetFrame,mask);
+        const localRole=roleR.current;
+        if(localRole)inputBufR.current[localRole]?.set(targetFrame,mask);
         if(connR.current?.open){
           try{connR.current.send({t:"i",f:targetFrame,i:mask})}catch(e){}
         }
