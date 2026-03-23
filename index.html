@@ -256,6 +256,7 @@ function ActiveGame(){
   const peerR=useRef(null);
   const renderFrameR=useRef(0);
   const simFrameR=useRef(0);
+  const inputFrameR=useRef(0);
   const clockR=useRef({last:0,acc:0});
   const roleR=useRef(null);
   const localInputsR=useRef(new Map());
@@ -291,6 +292,7 @@ function ActiveGame(){
     visR.current={prev:vis,curr:vis};
     renderFrameR.current=0;
     simFrameR.current=0;
+    inputFrameR.current=0;
     clockR.current={last:0,acc:0};
     localInputsR.current=new Map();
     remoteInputsR.current=new Map();
@@ -616,10 +618,9 @@ function ActiveGame(){
       const localRole=roleR.current;
       if(!localRole)return;
       const frame=simFrameR.current;
-      const localMask=encodeLocalInput();
+      const localMask=localInputsR.current.get(frame)??0;
       const remoteMask=remoteInputsR.current.has(frame)?remoteInputsR.current.get(frame):lastRemoteMaskR.current;
       const prevVis=captureVisualState(G.current);
-      localInputsR.current.set(frame,localMask);
       stateHistoryR.current.set(frame,cloneGameState(G.current));
       usedRemoteInputsR.current.set(frame,remoteMask);
       const p1Mask=localRole==="p1"?localMask:remoteMask;
@@ -641,14 +642,24 @@ function ActiveGame(){
       const dt=started?Math.min(100,ts-clockR.current.last):0;
       clockR.current.last=ts;
       clockR.current.acc+=dt;
+
+      while(clockR.current.acc>=FRAME_MS){
+        const inputFrame=inputFrameR.current;
+        const localMask=encodeLocalInput();
+        localInputsR.current.set(inputFrame,localMask);
+        if(connR.current?.open){
+          try{connR.current.send({t:"i",f:inputFrame,i:localMask})}catch(e){}
+        }
+        inputFrameR.current++;
+        clockR.current.acc-=FRAME_MS;
+      }
+
       let steps=0;
-      while(clockR.current.acc>=FRAME_MS&&steps<MAX_SIM_STEPS){
+      while(simFrameR.current<inputFrameR.current&&steps<MAX_SIM_STEPS){
         if(simFrameR.current>=latestRemoteFrameR.current+1+MAX_PREDICTION_FRAMES){
-          clockR.current.acc=Math.min(clockR.current.acc,FRAME_MS);
           break;
         }
         advanceSimulation();
-        clockR.current.acc-=FRAME_MS;
         steps++;
       }
 
