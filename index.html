@@ -690,8 +690,8 @@ function Game(){
           <div className="fight-wrap" onTouchStart={()=>{sfx.init();goFS()}}>
             <canvas ref={cvR} width={W} height={H}/>
           </div>
-          {/* Exit fullscreen button - top right */}
-          <button onClick={()=>{if(isFS)exitFS();else goFS()}} style={{position:"fixed",top:6,right:6,zIndex:30,width:32,height:32,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.15)",background:"rgba(0,0,0,0.4)",color:"rgba(255,255,255,0.5)",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"sans-serif",touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}>{isFS?"✕":"⛶"}</button>
+          {/* Fullscreen toggle button - top right, visible on all devices */}
+          <button onClick={()=>{if(isFS)exitFS();else goFS()}} style={{position:"fixed",top:8,right:8,zIndex:30,padding:"6px 14px",borderRadius:16,border:"1.5px solid rgba(255,255,255,0.3)",background:"rgba(0,0,0,0.7)",color:"#fff",fontSize:10,fontFamily:PF,display:"flex",alignItems:"center",gap:6,touchAction:"manipulation",WebkitTapHighlightColor:"transparent"}}><span style={{fontSize:14}}>{isFS?"✕":"⛶"}</span>{isFS?"EXIT":"FULL"}</button>
           {/* LEFT: D-pad */}
           <div style={{position:"fixed",bottom:10,left:10,zIndex:20}}>
             <div style={{position:"relative",width:140,height:140}}>
