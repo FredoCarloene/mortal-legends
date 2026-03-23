@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
 <title>Mortal Legends — Online</title>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -14,8 +18,8 @@
 html,body{background:#000;overflow:hidden;-webkit-user-select:none;user-select:none;height:100%;width:100%;position:fixed;top:0;left:0}
 button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #root{width:100%;height:100%}
-.fight-wrap{position:fixed;top:0;left:0;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center}
-.fight-wrap canvas{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.fight-wrap{position:fixed;top:0;left:0;width:100%;height:100%;background:#000}
+.fight-wrap canvas{display:block;width:100%;height:100%}
 .ctrl-layer{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
 .ctrl-layer button{pointer-events:auto}
 .dpad{z-index:20}
@@ -32,6 +36,18 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 <div id="root"></div>
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
+
+// Fullscreen helper
+function goFS(){
+  const el=document.documentElement;
+  try{
+    if(el.requestFullscreen)el.requestFullscreen({navigationUI:"hide"});
+    else if(el.webkitRequestFullscreen)el.webkitRequestFullscreen();
+    else if(el.msRequestFullscreen)el.msRequestFullscreen();
+  }catch(e){}
+  // Also lock to landscape if possible
+  try{screen.orientation?.lock?.("landscape").catch(()=>{})}catch(e){}
+}
 const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99;
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:2,kd:4,sd:12,sp:3.8,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:4,sd:12,sp:3.8,br:0.75}};
 const PF="'Press Start 2P',monospace";
@@ -168,7 +184,7 @@ function drawFx(c,x,y,f,t){if(f>15)return;const a=1-f/15,s=10+f*3;if(t==="specia
 // ─── MAIN COMPONENT ───
 function Game(){
   const cvR=useRef(null);
-  const[screen,setScreen]=useState("lobby"); // lobby|waiting|fight|dc
+  const[screen,setScreen]=useState("splash"); // splash|lobby|waiting|fight|dc
   const[roomCode,setRoomCode]=useState("");
   const[joinCode,setJoinCode]=useState("");
   const[role,setRole]=useState(null); // "p1"|"p2"
@@ -618,6 +634,14 @@ function Game(){
 
   return(<div style={{background:"#000",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:PF,padding:8}}>
 
+    {screen==="splash"&&<div onClick={()=>{goFS();sfx.init();setScreen("lobby")}} onTouchStart={()=>{goFS();sfx.init();setScreen("lobby")}} style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"#000",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:100}}>
+      <div style={{color:"#ff2222",fontSize:28,marginBottom:6,textShadow:"0 0 30px #ff4444"}}>MORTAL</div>
+      <div style={{color:"#ff2222",fontSize:28,marginBottom:24,textShadow:"0 0 30px #ff4444"}}>LEGENDS</div>
+      <div style={{color:"#e8a926",fontSize:9,marginBottom:40}}>ONLINE MULTIPLAYER</div>
+      <div style={{color:"#fff",fontSize:12,animation:"pulse 1.5s ease-in-out infinite"}}>TAP TO START</div>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
+    </div>}
+
     {screen==="lobby"&&<div style={{maxWidth:400,width:"100%",textAlign:"center",padding:16}}>
       <div style={{color:"#ff2222",fontSize:20,marginBottom:4,textShadow:"0 0 20px #ff4444"}}>MORTAL</div>
       <div style={{color:"#ff2222",fontSize:20,marginBottom:12,textShadow:"0 0 20px #ff4444"}}>LEGENDS</div>
@@ -650,7 +674,7 @@ function Game(){
             <div style={{fontSize:28,marginBottom:16}}>↻</div>
             ROTATE YOUR PHONE<br/><span style={{color:"#888",fontSize:8,marginTop:8,display:"block"}}>Landscape mode required</span>
           </div>
-          <div className="fight-wrap" onTouchStart={()=>sfx.init()}>
+          <div className="fight-wrap" onTouchStart={()=>{sfx.init();goFS()}}>
             <canvas ref={cvR} width={W} height={H}/>
           </div>
           {/* LEFT: D-pad */}
@@ -684,7 +708,7 @@ function Game(){
     {screen==="dc"&&<div style={{textAlign:"center",padding:16}}>
       <div style={{color:"#ff4444",fontSize:13,marginBottom:12}}>DISCONNECTED</div>
       <div style={{color:"#888",fontSize:8,marginBottom:16}}>{status}</div>
-      <button onClick={()=>{peerR.current?.destroy();setScreen("lobby");setStatus("")}} style={{...bs,padding:"10px 24px",fontSize:10,color:"#000",background:"#e8a926"}}>BACK TO LOBBY</button>
+      <button onClick={()=>{peerR.current?.destroy();setScreen("splash");setStatus("")}} style={{...bs,padding:"10px 24px",fontSize:10,color:"#000",background:"#e8a926"}}>BACK TO LOBBY</button>
     </div>}
   </div>);
 }
