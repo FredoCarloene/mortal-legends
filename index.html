@@ -55,7 +55,7 @@ function exitFS(){
 }
 function isFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement)}
 const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99;
-const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:2,kd:4,sd:12,sp:3.8,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:4,sd:12,sp:3.8,br:0.75}};
+const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:3,kd:5,sd:14,sp:3.2,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:3,sd:10,sp:4.5,br:0.75}};
 const PF="'Press Start 2P',monospace";
 
 // SFX
@@ -221,8 +221,8 @@ function Game(){
   const btnTap=useRef({}); // one-shot taps
 
   // Game state ref
-  const mkP=(id,x,f)=>({id,x,y:GY-CH,vy:0,health:100,maxHealth:100,special:0,action:null,actionTimer:0,facing:f,isJumping:false,isBlocking:false,combo:0,comboTimer:0,hitStun:0,dd:0,superReady:false,superActive:false,superBullets:0,superBoomerangs:0,superUsed:false});
-  const newGame=()=>({p1:mkP("gandhi",150,1),p2:mkP("binladen",550,-1),fx:[],shake:0,projectiles:[],snd:[],state:"fighting",ann:"ROUND 1",annTimer:120,round:1,wins:{p1:0,p2:0},timer:RT,timerAcc:0,roundEnded:false});
+  const mkP=(id,x,f)=>({id,x,y:GY-CH,vy:0,vx:0,health:100,maxHealth:100,special:0,action:null,actionTimer:0,facing:f,isJumping:false,isBlocking:false,combo:0,comboTimer:0,hitStun:0,dd:0,superReady:false,superActive:false,superBullets:0,superBoomerangs:0,superUsed:false,lastDir:0,lastDirTime:0});
+  const newGame=()=>({p1:mkP("gandhi",150,1),p2:mkP("binladen",550,-1),fx:[],shake:0,freeze:0,flash:0,projectiles:[],snd:[],state:"fighting",ann:"ROUND 1",annTimer:120,round:1,wins:{p1:0,p2:0},timer:RT,timerAcc:0,roundEnded:false});
   const G=useRef(newGame());
 
   // Remote player input (received via WebRTC)
@@ -250,7 +250,7 @@ function Game(){
       const g=G.current;
       g.state=d.s;g.ann=d.n||"";g.annTimer=d.nt||0;
       g.round=d.r;g.wins=d.w;g.timer=d.m;g.canRematch=!!d.c;
-      g.shake=d.k||0;
+      g.shake=d.k||0;g.freeze=d.fz||0;g.flash=d.fl||0;
       g.projectiles=(d.p||[]).map(a=>({type:a[0]===1?"boomerang":"bullet",x:a[1],y:a[2],dir:a[3],phase:a[4]===1?"out":"back",rotation:a[5],age:a[6],hit:!!a[7],owner:a[8]===1?"p1":"p2"}));
       g.fx=(d.f||[]).map(a=>({x:a[0],y:a[1],f:a[2],t:a[3]===1?"special":"normal"}));
       if(d.x)d.x.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
@@ -265,7 +265,7 @@ function Game(){
     return{t:"s",a:P(p1),b:P(p2),
       p:g.projectiles.length>0?g.projectiles.map(p=>[p.type==="boomerang"?1:2,p.x|0,p.y|0,p.dir,p.phase==="out"?1:0,p.rotation|0,p.age,p.hit?1:0,p.owner==="p1"?1:2]):[],
       f:g.fx.length>0?g.fx.slice(0,3).map(e=>[e.x|0,e.y|0,e.f,e.t==="special"?1:0]):[],
-      k:g.shake,s:g.state,n:g.ann,nt:g.annTimer,r:g.round,w:g.wins,m:g.timer,c:g.canRematch?1:0,
+      k:g.shake,fz:g.freeze||0,fl:g.flash||0,s:g.state,n:g.ann,nt:g.annTimer,r:g.round,w:g.wins,m:g.timer,c:g.canRematch?1:0,
       x:g.snd.splice(0)};
   },[]);
 
@@ -340,14 +340,34 @@ function Game(){
   const attack=(atk,def,type,g)=>{
     if(g.roundEnded)return;
     const cd=CHARS[atk.id];
-    let dm=0,rc=50;
-    if(type==="punch"){dm=cd.pd;rc=55}else if(type==="kick"){dm=cd.kd;rc=65}else if(type==="special"){dm=cd.sd;rc=80}
+    let dm=0,rc=50,kb=0,freeze=0;
+    if(type==="punch"){dm=cd.pd;rc=55;kb=6;freeze=2}
+    else if(type==="kick"){dm=cd.kd;rc=65;kb=10;freeze=3}
+    else if(type==="special"){dm=cd.sd;rc=80;kb=18;freeze=5}
     if(Math.abs(atk.x-def.x)<rc+CW){
-      if(def.isBlocking){dm*=(1-cd.br);g.shake=3;g.snd.push("block")}
-      else{g.shake=type==="special"?10:5;def.combo++;def.comboTimer=60;g.snd.push(type==="special"?"special":"hit")}
-      def.health=Math.max(0,def.health-dm);def.hitStun=type==="special"?15:8;
-      atk.special=Math.min(100,atk.special+dm*.8);atk.dd+=dm;
-      if(!atk.superReady&&!atk.superActive&&!atk.superUsed&&atk.dd>=def.maxHealth*.5){atk.superReady=true;g.snd.push("superReady")}
+      const dir=atk.x<def.x?1:-1;
+      if(def.isBlocking){
+        dm*=(1-cd.br);g.shake=3;g.snd.push("block");
+        // Small pushback on block
+        def.vx=dir*4;atk.vx=-dir*2;
+        freeze=1;
+      }else{
+        // Scale shake and freeze with combo
+        const comboMul=Math.min(1.5,1+def.combo*0.1);
+        g.shake=Math.round((type==="special"?12:6)*comboMul);
+        g.flash=type==="special"?4:2;
+        g.freeze=Math.round(freeze*comboMul);
+        def.combo++;def.comboTimer=90;
+        // Knockback - push defender back, slight push on attacker
+        def.vx=dir*kb*comboMul;
+        def.vy=type==="special"?-4:type==="kick"?-2:0;
+        atk.vx=-dir*2;
+        g.snd.push(type==="special"?"special":"hit");
+      }
+      def.health=Math.max(0,def.health-dm);
+      def.hitStun=type==="special"?18:type==="kick"?12:8;
+      atk.special=Math.min(100,atk.special+dm*0.8);atk.dd+=dm;
+      if(!atk.superReady&&!atk.superActive&&!atk.superUsed&&atk.dd>=def.maxHealth*0.5){atk.superReady=true;g.snd.push("superReady")}
       g.fx.push({x:(atk.x+def.x)/2+CW/2,y:atk.y+30,f:0,t:type==="special"?"special":"normal"});
     }
   };
@@ -409,6 +429,9 @@ function Game(){
         }
 
         if(g.state==="fighting"&&!g.roundEnded){
+          // Hit freeze — pause gameplay for impact feel
+          if(g.freeze>0){g.freeze--;} 
+          else {
           // P1 input (host local + mobile generic)
           const p1h={...held};const p1t={...tap};
           if(p1h._left)p1h.a=true;if(p1h._right)p1h.d=true;
@@ -426,7 +449,7 @@ function Game(){
           else{
             if(p1h.a)g.p1.x-=CHARS.gandhi.sp;
             if(p1h.d)g.p1.x+=CHARS.gandhi.sp;
-            if(p1h.w&&!g.p1.isJumping){g.p1.vy=-14;g.p1.isJumping=true}
+            if(p1h.w&&!g.p1.isJumping){g.p1.vy=-15;g.p1.isJumping=true}
             g.p1.isBlocking=!!p1h.s;
             if(!g.p1.action||(g.p1.action==="super"&&g.p1.actionTimer<=0)){
               if(p1h.f){g.p1.action="punch";g.p1.actionTimer=12;g.snd.push("punch");attack(g.p1,g.p2,"punch",g)}
@@ -452,7 +475,7 @@ function Game(){
           else{
             if(p2h.ArrowLeft)g.p2.x-=CHARS.binladen.sp;
             if(p2h.ArrowRight)g.p2.x+=CHARS.binladen.sp;
-            if(p2h.ArrowUp&&!g.p2.isJumping){g.p2.vy=-14;g.p2.isJumping=true}
+            if(p2h.ArrowUp&&!g.p2.isJumping){g.p2.vy=-15;g.p2.isJumping=true}
             g.p2.isBlocking=!!p2h.ArrowDown;
             if(!g.p2.action||(g.p2.action==="super"&&g.p2.actionTimer<=0)){
               if(!g.p2.superActive){
@@ -477,12 +500,15 @@ function Game(){
 
           // Physics
           for(const p of[g.p1,g.p2]){
-            p.vy+=GR;p.y+=p.vy;
+            p.vy+=1.0;p.y+=p.vy; // Tighter gravity (was 0.8)
             if(p.y>=GY-CH){p.y=GY-CH;p.vy=0;p.isJumping=false}
+            // Knockback velocity (friction decay)
+            if(p.vx){p.x+=p.vx;p.vx*=0.75;if(Math.abs(p.vx)<0.5)p.vx=0}
             p.x=Math.max(10,Math.min(W-CW-10,p.x));
             if(p.actionTimer>0){p.actionTimer--;if(p.actionTimer<=0&&(p.action!=="super"||!p.superActive))p.action=null}
             if(p.comboTimer>0){p.comboTimer--;if(p.comboTimer<=0)p.combo=0}
           }
+          } // end freeze else
           g.p1.facing=g.p1.x<g.p2.x?1:-1;g.p2.facing=g.p2.x<g.p1.x?1:-1;
           const ol=CW-Math.abs(g.p1.x-g.p2.x);
           if(ol>0&&Math.abs(g.p1.y-g.p2.y)<CH){const pu=ol/2;if(g.p1.x<g.p2.x){g.p1.x-=pu;g.p2.x+=pu}else{g.p1.x+=pu;g.p2.x-=pu}}
@@ -510,6 +536,7 @@ function Game(){
         // Update effects
         g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
         if(g.shake>0)g.shake--;
+        if(g.flash>0)g.flash--;
 
         // Play SFX locally
         g.snd.forEach(s=>{if(sfx[s])sfx[s]();const v={hit:30,block:15,special:50,ko:100,punch:20,kick:25,gunshot:40,boomerang:35};if(v[s])try{navigator.vibrate?.(v[s])}catch(e){}});
@@ -575,6 +602,16 @@ function Game(){
       ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fillRect(W/2-100,H-18,200,16);
       ctx.fillStyle=myRole==="p1"?"#e8a926":"#c0392b";ctx.font=`bold 8px ${PF}`;ctx.textAlign="center";
       ctx.fillText(youTxt,W/2,H-7);
+      // Hit flash overlay
+      if(g.flash>0){ctx.fillStyle=`rgba(255,255,255,${g.flash*0.15})`;ctx.fillRect(0,0,W,H)}
+      // Combo counter
+      for(const p of[g.p1,g.p2]){if(p.combo>=2&&p.comboTimer>0){
+        const a=Math.min(1,p.comboTimer/30);
+        ctx.save();ctx.globalAlpha=a;ctx.fillStyle=p.combo>=5?"#ff4444":p.combo>=3?"#ffaa00":"#fff";
+        ctx.font=`bold ${12+p.combo*2}px ${PF}`;ctx.textAlign="center";
+        ctx.fillText(`${p.combo} HIT${p.combo>1?"S":""}!`,p===g.p1?g.p2.x+CW/2:g.p1.x+CW/2,p===g.p1?g.p2.y-10:g.p1.y-10);
+        ctx.restore();
+      }}
       // Announcement overlay
       if(g.ann){
         ctx.fillStyle="rgba(0,0,0,0.6)";ctx.fillRect(0,H/2-40,W,80);
