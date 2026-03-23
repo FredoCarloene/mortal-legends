@@ -587,7 +587,7 @@ function Game(){
   const hold=(key,down)=>{sfx.init();btnDown.current={...btnDown.current,[key]:down}};
   const tap=(key)=>{sfx.init();btnTap.current={...btnTap.current,[key]:true}};
 
-  const Btn=({label,k,color="#fff",sz=56,round=true})=>(
+  const Btn=({label,k,color="#fff",sz=56})=>(
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();hold(k,true)}}
       onTouchEnd={e=>{e.preventDefault();e.stopPropagation();hold(k,false)}}
@@ -595,14 +595,14 @@ function Game(){
       onMouseDown={()=>hold(k,true)}
       onMouseUp={()=>hold(k,false)}
       onMouseLeave={()=>hold(k,false)}
-      style={{width:sz,height:sz,borderRadius:"50%",border:`2px solid ${color}55`,background:"rgba(20,20,30,0.65)",color,fontFamily:"sans-serif",fontSize:sz*0.38,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",boxShadow:`inset 0 0 ${sz/4}px ${color}15, 0 2px 8px rgba(0,0,0,0.4)`}}
+      style={{width:sz,height:sz,borderRadius:"50%",border:`1.5px solid ${color}40`,background:"rgba(255,255,255,0.06)",color:`${color}cc`,fontFamily:"sans-serif",fontSize:sz*0.36,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
     >{label}</button>
   );
   const TapBtn=({label,k,color="#fff",sz=56})=>(
     <button
       onTouchStart={e=>{e.preventDefault();e.stopPropagation();tap(k)}}
       onMouseDown={()=>tap(k)}
-      style={{width:sz,height:sz,borderRadius:"50%",border:`2px solid ${color}55`,background:`rgba(20,20,30,0.65)`,color,fontFamily:"sans-serif",fontSize:sz*0.38,fontWeight:"bold",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",boxShadow:`inset 0 0 ${sz/4}px ${color}20, 0 2px 8px rgba(0,0,0,0.4)`}}
+      style={{width:sz,height:sz,borderRadius:"50%",border:`1.5px solid ${color}40`,background:"rgba(255,255,255,0.06)",color:`${color}cc`,fontFamily:"sans-serif",fontSize:sz*0.36,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",WebkitTouchCallout:"none"}}
     >{label}</button>
   );
 
@@ -653,34 +653,24 @@ function Game(){
           <div className="fight-wrap" onTouchStart={()=>sfx.init()}>
             <canvas ref={cvR} width={W} height={H}/>
           </div>
-          {/* LEFT: D-pad cross with circular backing */}
-          <div className="dpad" style={{position:"fixed",bottom:10,left:10,zIndex:20}}>
+          {/* LEFT: D-pad */}
+          <div style={{position:"fixed",bottom:10,left:10,zIndex:20}}>
             <div style={{position:"relative",width:140,height:140}}>
-              {/* Background circle */}
-              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(10,10,20,0.35)",border:"1px solid rgba(255,255,255,0.08)"}}/>
-              {/* Up */}
-              <div style={{position:"absolute",top:0,left:45}}><Btn label="▲" k={mk.u} color={mc} sz={50}/></div>
-              {/* Left */}
-              <div style={{position:"absolute",top:45,left:0}}><Btn label="◀" k={mk.l} color={mc} sz={50}/></div>
-              {/* Block center */}
-              <div style={{position:"absolute",top:47,left:47}}><Btn label="🛡" k={mk.d} color="#8899aa" sz={46}/></div>
-              {/* Right */}
-              <div style={{position:"absolute",top:45,right:0}}><Btn label="▶" k={mk.r} color={mc} sz={50}/></div>
+              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
+              <div style={{position:"absolute",top:0,left:45}}><Btn label="△" k={mk.u} color={mc} sz={50}/></div>
+              <div style={{position:"absolute",top:45,left:0}}><Btn label="◁" k={mk.l} color={mc} sz={50}/></div>
+              <div style={{position:"absolute",top:47,left:47}}><Btn label="○" k={mk.d} color={mc} sz={46}/></div>
+              <div style={{position:"absolute",top:45,right:0}}><Btn label="▷" k={mk.r} color={mc} sz={50}/></div>
             </div>
           </div>
-          {/* RIGHT: PS5 diamond - Kick top, Punch left, Special right, Super bottom */}
-          <div className="atk-area" style={{position:"fixed",bottom:10,right:10,zIndex:20}}>
+          {/* RIGHT: Attack diamond */}
+          <div style={{position:"fixed",bottom:10,right:10,zIndex:20}}>
             <div style={{position:"relative",width:140,height:140}}>
-              {/* Background circle */}
-              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(10,10,20,0.35)",border:"1px solid rgba(255,255,255,0.08)"}}/>
-              {/* Top - Kick (△ style) */}
-              <div style={{position:"absolute",top:0,left:45}}><Btn label="🦶" k={mk.k} color="#44aaff" sz={50}/></div>
-              {/* Left - Punch (□ style) */}
-              <div style={{position:"absolute",top:45,left:0}}><Btn label="👊" k={mk.p} color="#ff6644" sz={50}/></div>
-              {/* Right - Special (○ style) */}
-              <div style={{position:"absolute",top:45,right:0}}><Btn label="💥" k={mk.s} color={mc} sz={50}/></div>
-              {/* Bottom - Super (✕ style) */}
-              <div style={{position:"absolute",bottom:0,left:45}}><TapBtn label="⚡" k={mk.su} color="#ff8844" sz={50}/></div>
+              <div style={{position:"absolute",top:10,left:10,width:120,height:120,borderRadius:"50%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}/>
+              <div style={{position:"absolute",top:0,left:45}}><Btn label="K" k={mk.k} color={mc} sz={50}/></div>
+              <div style={{position:"absolute",top:45,left:0}}><Btn label="P" k={mk.p} color={mc} sz={50}/></div>
+              <div style={{position:"absolute",top:45,right:0}}><Btn label="S" k={mk.s} color={mc} sz={50}/></div>
+              <div style={{position:"absolute",bottom:0,left:45}}><TapBtn label="★" k={mk.su} color={mc} sz={50}/></div>
             </div>
           </div>
         </>
