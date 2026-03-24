@@ -54,7 +54,7 @@ function exitFS(){
   }catch(e){}
 }
 function isFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement)}
-const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,MAX_SIM_STEPS=3,ROLLBACK_WINDOW=180,SYNC_START_DELAY_MS=120,MAX_PREDICTION_FRAMES=30,INPUT_PACKET_HISTORY=6,READY_RESEND_MS=250;
+const W=800,H=400,GY=320,GR=0.8,CW=60,CH=90,RT=99,FRAME_MS=1000/60,MAX_SIM_STEPS=6,ROLLBACK_WINDOW=180,ROLLBACK_BUFFER_SIZE=512,SYNC_START_DELAY_MS=120,LOCAL_INPUT_DELAY=2,MAX_PREDICTION_FRAMES=8,INPUT_PACKET_HISTORY=12,READY_RESEND_MS=250;
 const IB={L:1,R:2,U:4,D:8,P:16,K:32,S:64,SU:128};
 const CHARS={gandhi:{name:"GANDHI",accent:"#e8a926",pd:3,kd:5,sd:14,sp:3.2,br:0.75},binladen:{name:"BIN LADEN",accent:"#c0392b",pd:2,kd:3,sd:10,sp:4.5,br:0.75}};
 const PF="'Press Start 2P',monospace";
@@ -62,6 +62,7 @@ const ROCKET_FX_OFFSETS=[[-18,-10],[-8,8],[0,0],[10,-6],[18,10]];
 const PK_READY=1,PK_INPUT=2;
 const hasBit=(mask,bit)=>(mask&bit)!==0;
 const lerp=(a,b,t)=>a+(b-a)*t;
+const frameSlot=frame=>frame&(ROLLBACK_BUFFER_SIZE-1);
 function cloneGameState(g){
   return{
     ...g,
@@ -73,23 +74,25 @@ function cloneGameState(g){
     snd:[]
   };
 }
-function pruneFrameMap(map,minFrame){
-  for(const k of Array.from(map.keys()))if(k<minFrame)map.delete(k);
-}
-function captureVisualState(g){
-  return{
-    p1:{x:g.p1.x,y:g.p1.y},
-    p2:{x:g.p2.x,y:g.p2.y},
-    projectiles:g.projectiles.map(p=>({type:p.type,owner:p.owner,x:p.x,y:p.y,rotation:p.rotation||0}))
-  };
-}
-function blendProjectiles(prev,curr,t){
-  if(!prev||prev.length!==curr.length)return curr;
-  return curr.map((p,i)=>{
-    const a=prev[i];
-    if(!a||a.type!==p.type||a.owner!==p.owner)return p;
-    return{...p,x:lerp(a.x,p.x,t),y:lerp(a.y,p.y,t),rotation:lerp(a.rotation||0,p.rotation||0,t)};
-  });
+function copyGameStateInto(dst,g){
+  if(!dst)return cloneGameState(g);
+  Object.assign(dst,g);
+  Object.assign(dst.p1,g.p1);
+  Object.assign(dst.p2,g.p2);
+  dst.wins.p1=g.wins.p1;
+  dst.wins.p2=g.wins.p2;
+  dst.projectiles.length=g.projectiles.length;
+  for(let i=0;i<g.projectiles.length;i++){
+    if(dst.projectiles[i])Object.assign(dst.projectiles[i],g.projectiles[i]);
+    else dst.projectiles[i]={...g.projectiles[i]};
+  }
+  dst.fx.length=g.fx.length;
+  for(let i=0;i<g.fx.length;i++){
+    if(dst.fx[i])Object.assign(dst.fx[i],g.fx[i]);
+    else dst.fx[i]={...g.fx[i]};
+  }
+  dst.snd.length=0;
+  return dst;
 }
 function makeReadyPacket(){
   return new Uint8Array([PK_READY]).buffer;
@@ -106,18 +109,6 @@ function makeInputPacket(frame,getMask){
     buf[6+i]=(getMask(sampleFrame)??0)&0xff;
   }
   return buf.buffer;
-}
-function makeReadyMessage(){
-  return{t:"ready"};
-}
-function makeInputMessage(frame,getMask){
-  const count=Math.min(INPUT_PACKET_HISTORY,frame+1);
-  const history=[];
-  for(let i=0;i<count;i++){
-    const sampleFrame=frame-count+1+i;
-    history.push((getMask(sampleFrame)??0)&0xff);
-  }
-  return{t:"i2",f:frame,h:history};
 }
 function asPacketBytes(data){
   if(data instanceof ArrayBuffer)return new Uint8Array(data);
@@ -290,19 +281,25 @@ function ActiveGame(){
   const peerR=useRef(null);
   const renderFrameR=useRef(0);
   const simFrameR=useRef(0);
-  const inputFrameR=useRef(0);
+  const sampleFrameR=useRef(0);
+  const localReadyFrameR=useRef(0);
   const clockR=useRef({last:0,acc:0});
   const roleR=useRef(null);
-  const localInputsR=useRef(new Map());
-  const remoteInputsR=useRef(new Map());
-  const usedRemoteInputsR=useRef(new Map());
-  const stateHistoryR=useRef(new Map());
+  const localInputsR=useRef(new Uint8Array(ROLLBACK_BUFFER_SIZE));
+  const localInputFramesR=useRef(new Int32Array(ROLLBACK_BUFFER_SIZE).fill(-1));
+  const remoteInputsR=useRef(new Uint8Array(ROLLBACK_BUFFER_SIZE));
+  const remoteInputFramesR=useRef(new Int32Array(ROLLBACK_BUFFER_SIZE).fill(-1));
+  const usedRemoteInputsR=useRef(new Uint8Array(ROLLBACK_BUFFER_SIZE));
+  const usedRemoteFramesR=useRef(new Int32Array(ROLLBACK_BUFFER_SIZE).fill(-1));
+  const stateHistoryR=useRef(new Array(ROLLBACK_BUFFER_SIZE).fill(null));
+  const stateHistoryFramesR=useRef(new Int32Array(ROLLBACK_BUFFER_SIZE).fill(-1));
+  const rollbackStateR=useRef(null);
   const lastRemoteMaskR=useRef(0);
   const latestRemoteFrameR=useRef(-1);
+  const confirmedRemoteFrameR=useRef(-1);
   const remoteReadyR=useRef(false);
   const startAtR=useRef(null);
   const lastReadySendR=useRef(0);
-  const visR=useRef({prev:null,curr:null});
 
   useEffect(()=>{setIsMobile(window.innerWidth<900||"ontouchstart"in window)},[]);
   useEffect(()=>{const p=new URLSearchParams(window.location.search);const c=p.get("room");if(c&&c.length===4)setJoinCode(c)},[]);
@@ -323,31 +320,83 @@ function ActiveGame(){
 
   const resetSession=useCallback(()=>{
     G.current=newGame();
-    const vis=captureVisualState(G.current);
-    visR.current={prev:vis,curr:vis};
     renderFrameR.current=0;
     simFrameR.current=0;
-    inputFrameR.current=0;
+    sampleFrameR.current=0;
+    localReadyFrameR.current=LOCAL_INPUT_DELAY-1;
     clockR.current={last:0,acc:0};
-    localInputsR.current=new Map();
-    remoteInputsR.current=new Map();
-    usedRemoteInputsR.current=new Map();
-    stateHistoryR.current=new Map([[0,cloneGameState(G.current)]]);
+    localInputsR.current.fill(0);
+    localInputFramesR.current.fill(-1);
+    remoteInputsR.current.fill(0);
+    remoteInputFramesR.current.fill(-1);
+    usedRemoteInputsR.current.fill(0);
+    usedRemoteFramesR.current.fill(-1);
+    stateHistoryR.current.fill(null);
+    stateHistoryFramesR.current.fill(-1);
+    rollbackStateR.current=null;
+    for(let frame=0;frame<LOCAL_INPUT_DELAY;frame++){
+      const slot=frameSlot(frame);
+      localInputFramesR.current[slot]=frame;
+      localInputsR.current[slot]=0;
+      remoteInputFramesR.current[slot]=frame;
+      remoteInputsR.current[slot]=0;
+      usedRemoteFramesR.current[slot]=frame;
+      usedRemoteInputsR.current[slot]=0;
+    }
+    const slot=frameSlot(0);
+    stateHistoryR.current[slot]=copyGameStateInto(stateHistoryR.current[slot],G.current);
+    stateHistoryFramesR.current[slot]=0;
     lastRemoteMaskR.current=0;
-    latestRemoteFrameR.current=-1;
+    latestRemoteFrameR.current=LOCAL_INPUT_DELAY-1;
+    confirmedRemoteFrameR.current=LOCAL_INPUT_DELAY-1;
     remoteReadyR.current=false;
     startAtR.current=null;
     lastReadySendR.current=0;
     btnTap.current={};
   },[]);
 
-  const trimHistory=useCallback((frame)=>{
-    const minFrame=frame-ROLLBACK_WINDOW;
-    pruneFrameMap(localInputsR.current,minFrame);
-    pruneFrameMap(remoteInputsR.current,minFrame);
-    pruneFrameMap(usedRemoteInputsR.current,minFrame);
-    pruneFrameMap(stateHistoryR.current,minFrame);
+  const getLocalInput=useCallback(frame=>{
+    const slot=frameSlot(frame);
+    return localInputFramesR.current[slot]===frame?localInputsR.current[slot]:0;
   },[]);
+  const setLocalInput=useCallback((frame,mask)=>{
+    const slot=frameSlot(frame);
+    localInputFramesR.current[slot]=frame;
+    localInputsR.current[slot]=mask&0xff;
+  },[]);
+  const hasRemoteInput=useCallback(frame=>remoteInputFramesR.current[frameSlot(frame)]===frame,[]);
+  const getRemoteInput=useCallback((frame,fallback=0)=>{
+    const slot=frameSlot(frame);
+    return remoteInputFramesR.current[slot]===frame?remoteInputsR.current[slot]:fallback;
+  },[]);
+  const setRemoteInput=useCallback((frame,mask)=>{
+    const slot=frameSlot(frame);
+    remoteInputFramesR.current[slot]=frame;
+    remoteInputsR.current[slot]=mask&0xff;
+  },[]);
+  const getUsedRemoteInput=useCallback((frame,fallback=0)=>{
+    const slot=frameSlot(frame);
+    return usedRemoteFramesR.current[slot]===frame?usedRemoteInputsR.current[slot]:fallback;
+  },[]);
+  const setUsedRemoteInput=useCallback((frame,mask)=>{
+    const slot=frameSlot(frame);
+    usedRemoteFramesR.current[slot]=frame;
+    usedRemoteInputsR.current[slot]=mask&0xff;
+  },[]);
+  const getStateSnapshot=useCallback(frame=>{
+    const slot=frameSlot(frame);
+    return stateHistoryFramesR.current[slot]===frame?stateHistoryR.current[slot]:null;
+  },[]);
+  const saveStateSnapshot=useCallback((frame,g)=>{
+    const slot=frameSlot(frame);
+    stateHistoryR.current[slot]=copyGameStateInto(stateHistoryR.current[slot],g);
+    stateHistoryFramesR.current[slot]=frame;
+  },[]);
+  const advanceConfirmedRemoteFrame=useCallback(()=>{
+    let frame=confirmedRemoteFrameR.current+1;
+    while(hasRemoteInput(frame))frame++;
+    confirmedRemoteFrameR.current=frame-1;
+  },[hasRemoteInput]);
 
   const encodeLocalInput=useCallback(()=>{
     const held=btnDown.current;
@@ -558,45 +607,44 @@ function ActiveGame(){
   },[attack]);
 
   const rollbackFromFrame=useCallback((fromFrame)=>{
-    const snapshot=stateHistoryR.current.get(fromFrame);
+    const snapshot=getStateSnapshot(fromFrame);
     const localRole=roleR.current;
     if(!snapshot||!localRole)return;
-    let state=cloneGameState(snapshot);
-    let remoteMask=fromFrame>0?(usedRemoteInputsR.current.get(fromFrame-1)??0):0;
+    let state=copyGameStateInto(rollbackStateR.current,snapshot);
+    rollbackStateR.current=state;
+    let remoteMask=fromFrame>0?getUsedRemoteInput(fromFrame-1,0):0;
     for(let f=fromFrame;f<simFrameR.current;f++){
-      const localMask=localInputsR.current.get(f)??0;
-      if(remoteInputsR.current.has(f))remoteMask=remoteInputsR.current.get(f);
-      stateHistoryR.current.set(f,cloneGameState(state));
-      usedRemoteInputsR.current.set(f,remoteMask);
+      const localMask=getLocalInput(f);
+      if(hasRemoteInput(f))remoteMask=getRemoteInput(f,remoteMask);
+      saveStateSnapshot(f,state);
+      setUsedRemoteInput(f,remoteMask);
       const p1Mask=localRole==="p1"?localMask:remoteMask;
       const p2Mask=localRole==="p2"?localMask:remoteMask;
       state.snd=[];
       state=stepFrame(state,p1Mask,p2Mask,f);
+      rollbackStateR.current=state;
       state.snd=[];
     }
     G.current=state;
     lastRemoteMaskR.current=remoteMask;
-    const vis=captureVisualState(state);
-    visR.current={prev:visR.current.curr||vis,curr:vis};
-    trimHistory(simFrameR.current);
-  },[stepFrame,trimHistory]);
+  },[getLocalInput,getRemoteInput,getStateSnapshot,getUsedRemoteInput,hasRemoteInput,saveStateSnapshot,setUsedRemoteInput,stepFrame]);
 
   const applyRemoteHistory=useCallback((latestFrame,history)=>{
     latestRemoteFrameR.current=Math.max(latestRemoteFrameR.current,latestFrame);
     if(startAtR.current==null)startAtR.current=performance.now()+SYNC_START_DELAY_MS;
+    let rollbackFrame=null;
     const count=Math.min(Array.isArray(history)?history.length:0,latestFrame+1);
     for(let i=0;i<count;i++){
       const frame=latestFrame-count+1+i;
       if(frame<0)continue;
       const mask=(history[i]??0)&0xff;
-      remoteInputsR.current.set(frame,mask);
-      const usedMask=usedRemoteInputsR.current.get(frame);
-      if(frame<simFrameR.current&&usedMask!=null&&usedMask!==mask){
-        rollbackFromFrame(frame);
-        break;
-      }
+      setRemoteInput(frame,mask);
+      const usedMask=getUsedRemoteInput(frame,null);
+      if(frame<simFrameR.current&&usedMask!=null&&usedMask!==mask&&rollbackFrame==null)rollbackFrame=frame;
     }
-  },[rollbackFromFrame]);
+    advanceConfirmedRemoteFrame();
+    if(rollbackFrame!=null)rollbackFromFrame(rollbackFrame);
+  },[advanceConfirmedRemoteFrame,getUsedRemoteInput,rollbackFromFrame,setRemoteInput]);
 
   const onPacketBytes=useCallback((bytes)=>{
     if(!bytes?.length)return;
@@ -616,19 +664,17 @@ function ActiveGame(){
   },[applyRemoteHistory]);
 
   const onData=useCallback((d)=>{
-    if(d?.t==="ready"){
-      remoteReadyR.current=true;
-      if(startAtR.current==null)startAtR.current=performance.now()+SYNC_START_DELAY_MS;
-      return;
-    }
-    if(d?.t==="i2"&&typeof d.f==="number"){
-      applyRemoteHistory(d.f|0,d.h);
-      return;
-    }
     const bytes=asPacketBytes(d);
     if(bytes){onPacketBytes(bytes);return;}
     if(d instanceof Blob){
       d.arrayBuffer().then(buf=>onPacketBytes(new Uint8Array(buf))).catch(()=>{});
+      return;
+    }
+    if(d?.t==="ready"){
+      remoteReadyR.current=true;
+      if(startAtR.current==null)startAtR.current=performance.now()+SYNC_START_DELAY_MS;
+    }else if(d?.t==="i2"&&typeof d.f==="number"){
+      applyRemoteHistory(d.f|0,d.h);
     }
   },[applyRemoteHistory,onPacketBytes]);
 
@@ -639,7 +685,7 @@ function ActiveGame(){
       resetSession();
       startAtR.current=performance.now()+SYNC_START_DELAY_MS;
       if(conn.dataChannel)conn.dataChannel.binaryType="arraybuffer";
-      try{conn.send(makeReadyMessage())}catch(e){}
+      try{conn.send(makeReadyPacket())}catch(e){}
       lastReadySendR.current=performance.now();
       setScreen("fight");setStatus("");
     });
@@ -676,6 +722,47 @@ function ActiveGame(){
   },[setupConn]);
 
   useEffect(()=>()=>{connR.current?.close();peerR.current?.destroy()},[]);
+  const renderGameToText=useCallback(()=>JSON.stringify({
+    mode:screen,
+    role:roleR.current,
+    coords:"origin top-left, +x right, +y down",
+    roomCode:roomCode||null,
+    status:status||"",
+    simFrame:simFrameR.current,
+    sampledLocalFrames:sampleFrameR.current,
+    localReadyFrame:localReadyFrameR.current,
+    latestRemoteFrame:latestRemoteFrameR.current,
+    confirmedRemoteFrame:confirmedRemoteFrameR.current,
+    match:{
+      state:G.current.state,
+      round:G.current.round,
+      timer:G.current.timer,
+      announcement:G.current.ann
+    },
+    p1:{
+      x:Math.round(G.current.p1.x),
+      y:Math.round(G.current.p1.y),
+      hp:Math.round(G.current.p1.health),
+      action:G.current.p1.action,
+      blocking:G.current.p1.isBlocking,
+      superReady:G.current.p1.superReady,
+      superActive:G.current.p1.superActive
+    },
+    p2:{
+      x:Math.round(G.current.p2.x),
+      y:Math.round(G.current.p2.y),
+      hp:Math.round(G.current.p2.health),
+      action:G.current.p2.action,
+      blocking:G.current.p2.isBlocking,
+      superReady:G.current.p2.superReady,
+      superActive:G.current.p2.superActive
+    },
+    projectiles:G.current.projectiles.map(p=>({type:p.type,owner:p.owner,x:Math.round(p.x),y:Math.round(p.y)}))
+  }),[roomCode,screen,status]);
+  useEffect(()=>{
+    window.render_game_to_text=renderGameToText;
+    return()=>{delete window.render_game_to_text};
+  },[renderGameToText]);
 
   useEffect(()=>{
     if(screen!=="fight"||!role)return;
@@ -693,58 +780,24 @@ function ActiveGame(){
       const localRole=roleR.current;
       if(!localRole)return;
       const frame=simFrameR.current;
-      const localMask=localInputsR.current.get(frame)??0;
-      const remoteMask=remoteInputsR.current.has(frame)?remoteInputsR.current.get(frame):lastRemoteMaskR.current;
-      const prevVis=captureVisualState(G.current);
-      stateHistoryR.current.set(frame,cloneGameState(G.current));
-      usedRemoteInputsR.current.set(frame,remoteMask);
+      const localMask=getLocalInput(frame);
+      const remoteMask=getRemoteInput(frame,lastRemoteMaskR.current);
+      saveStateSnapshot(frame,G.current);
+      setUsedRemoteInput(frame,remoteMask);
       const p1Mask=localRole==="p1"?localMask:remoteMask;
       const p2Mask=localRole==="p2"?localMask:remoteMask;
       G.current=stepFrame(G.current,p1Mask,p2Mask,frame);
-      visR.current={prev:prevVis,curr:captureVisualState(G.current)};
       lastRemoteMaskR.current=remoteMask;
       simFrameR.current++;
-      trimHistory(simFrameR.current);
       playQueued(G.current);
     };
 
-    const loop=(ts)=>{
-      if(!clockR.current.last)clockR.current.last=ts;
-      const started=startAtR.current!=null&&ts>=startAtR.current;
-      if(connR.current?.open&&!remoteReadyR.current&&ts-lastReadySendR.current>=READY_RESEND_MS){
-        try{connR.current.send(makeReadyMessage())}catch(e){}
-        lastReadySendR.current=ts;
-      }
-      const dt=started?Math.min(100,ts-clockR.current.last):0;
-      clockR.current.last=ts;
-      clockR.current.acc+=dt;
-
-      while(clockR.current.acc>=FRAME_MS){
-        const inputFrame=inputFrameR.current;
-        const localMask=encodeLocalInput();
-        localInputsR.current.set(inputFrame,localMask);
-        if(connR.current?.open){
-          try{connR.current.send(makeInputMessage(inputFrame,frame=>localInputsR.current.get(frame)??0))}catch(e){}
-        }
-        inputFrameR.current++;
-        clockR.current.acc-=FRAME_MS;
-      }
-
-      let steps=0;
-      while(simFrameR.current<inputFrameR.current&&steps<MAX_SIM_STEPS){
-        if(simFrameR.current>=latestRemoteFrameR.current+1+MAX_PREDICTION_FRAMES){
-          break;
-        }
-        advanceSimulation();
-        steps++;
-      }
-
+    const drawFrame=()=>{
       const fr=renderFrameR.current++;
       const g=G.current;
-      const alpha=started?Math.min(1,clockR.current.acc/FRAME_MS):0;
-      const p1Draw=visR.current.curr?{...g.p1,x:lerp(visR.current.prev?.p1?.x??g.p1.x,visR.current.curr.p1.x,alpha),y:lerp(visR.current.prev?.p1?.y??g.p1.y,visR.current.curr.p1.y,alpha)}:g.p1;
-      const p2Draw=visR.current.curr?{...g.p2,x:lerp(visR.current.prev?.p2?.x??g.p2.x,visR.current.curr.p2.x,alpha),y:lerp(visR.current.prev?.p2?.y??g.p2.y,visR.current.curr.p2.y,alpha)}:g.p2;
-      const projDraw=visR.current.curr?blendProjectiles(visR.current.prev?.projectiles,g.projectiles,alpha):g.projectiles;
+      const p1Draw=g.p1;
+      const p2Draw=g.p2;
+      const projDraw=g.projectiles;
 
       ctx.save();
       if(g.shake>0)ctx.translate((Math.random()-.5)*g.shake*3,(Math.random()-.5)*g.shake*3);
@@ -783,12 +836,56 @@ function ActiveGame(){
         }
       }
       ctx.restore();
+    };
+
+    const pump=(ts,forcedMs=null)=>{
+      if(!clockR.current.last)clockR.current.last=ts;
+      const started=startAtR.current!=null&&ts>=startAtR.current;
+      if(connR.current?.open&&!remoteReadyR.current&&ts-lastReadySendR.current>=READY_RESEND_MS){
+        try{connR.current.send(makeReadyPacket())}catch(e){}
+        lastReadySendR.current=ts;
+      }
+      const dt=started?(forcedMs!=null?forcedMs:Math.min(100,ts-clockR.current.last)):0;
+      clockR.current.last=ts;
+      clockR.current.acc+=dt;
+
+      while(clockR.current.acc>=FRAME_MS){
+        const sampleFrame=sampleFrameR.current;
+        const inputFrame=sampleFrame+LOCAL_INPUT_DELAY;
+        const localMask=encodeLocalInput();
+        setLocalInput(inputFrame,localMask);
+        localReadyFrameR.current=inputFrame;
+        if(connR.current?.open){
+          try{connR.current.send(makeInputPacket(inputFrame,getLocalInput))}catch(e){}
+        }
+        sampleFrameR.current++;
+        clockR.current.acc-=FRAME_MS;
+      }
+
+      let steps=0;
+      const maxPredictedFrame=Math.min(localReadyFrameR.current,confirmedRemoteFrameR.current+MAX_PREDICTION_FRAMES);
+      while(simFrameR.current<=maxPredictedFrame&&steps<MAX_SIM_STEPS){
+        advanceSimulation();
+        steps++;
+      }
+      drawFrame();
+    };
+
+    const loop=(ts)=>{
+      pump(ts);
       aid=requestAnimationFrame(loop);
     };
 
+    window.advanceTime=async(ms)=>{
+      const steps=Math.max(1,Math.round(ms/FRAME_MS));
+      for(let i=0;i<steps;i++){
+        const now=(clockR.current.last||performance.now())+FRAME_MS;
+        pump(now,FRAME_MS);
+      }
+    };
     aid=requestAnimationFrame(loop);
-    return()=>cancelAnimationFrame(aid);
-  },[encodeLocalInput,role,screen,stepFrame,trimHistory]);
+    return()=>{cancelAnimationFrame(aid);delete window.advanceTime};
+  },[encodeLocalInput,getLocalInput,getRemoteInput,role,saveStateSnapshot,screen,setLocalInput,setUsedRemoteInput,stepFrame]);
 
   const vib=(ms)=>{try{navigator.vibrate?.(ms)}catch(e){}};
   const hold=(key,down)=>{sfx.init();if(down)vib(15);btnDown.current={...btnDown.current,[key]:down}};
@@ -825,7 +922,7 @@ function ActiveGame(){
       <div style={{color:"#ff2222",fontSize:28,marginBottom:6,textShadow:"0 0 30px #ff4444"}}>MORTAL</div>
       <div style={{color:"#ff2222",fontSize:28,marginBottom:20,textShadow:"0 0 30px #ff4444"}}>LEGENDS</div>
       <div style={{color:"#e8a926",fontSize:9,marginBottom:24}}>ONLINE MULTIPLAYER</div>
-      <button onClick={()=>{goFS();sfx.init();setScreen("lobby")}} style={{...bs,padding:"16px 48px",fontSize:14,color:"#000",background:"#e8a926",borderRadius:30,animation:"pulse 1.5s ease-in-out infinite",marginBottom:20}}>TAP TO START</button>
+      <button id="start-btn" onClick={()=>{goFS();sfx.init();setScreen("lobby")}} style={{...bs,padding:"16px 48px",fontSize:14,color:"#000",background:"#e8a926",borderRadius:30,animation:"pulse 1.5s ease-in-out infinite",marginBottom:20}}>TAP TO START</button>
       {!window.matchMedia("(display-mode:standalone)").matches&&isMobile&&isIOS&&<>
         <button onClick={()=>setScreen("install")} style={{...bs,padding:"10px 28px",fontSize:9,color:"#4ae",background:"transparent",border:"1.5px solid #4ae6",borderRadius:20}}>📲 INSTALL AS APP</button>
         <div style={{color:"#555",fontSize:6,marginTop:10}}>Play fullscreen without browser bars</div>
