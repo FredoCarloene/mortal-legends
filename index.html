@@ -142,7 +142,14 @@ function cloneGameState(g){
 }
 function copyGameStateInto(dst,g){
   if(!dst)return cloneGameState(g);
+  // Save dst's own sub-object refs before Object.assign overwrites them with g's refs.
+  // Without this, Object.assign(dst,g) makes dst.p1===g.p1, turning every subsequent
+  // Object.assign(dst.p1,g.p1) into a no-op, and all snapshots silently alias live state.
+  const dstP1=dst.p1,dstP2=dst.p2,dstWins=dst.wins,
+        dstProjs=dst.projectiles,dstFx=dst.fx,dstRng=dst.rng;
   Object.assign(dst,g);
+  dst.p1=dstP1;dst.p2=dstP2;dst.wins=dstWins;
+  dst.projectiles=dstProjs;dst.fx=dstFx;dst.rng=dstRng;
   Object.assign(dst.p1,g.p1);
   Object.assign(dst.p2,g.p2);
   dst.wins.p1=g.wins.p1;
@@ -773,15 +780,14 @@ function ActiveGame(){
     else if(type==="special"){dm=cd.sd;rc=80;kb=18;freeze=5}
     if(Math.abs(atk.x-def.x)<rc+CW){
       // Elusive: Bin Laden's 20% dodge passive.
-      // Roll ONLY on confirmed sim. During prediction, no dodge → flicker on rollback if dodge confirms.
-      if(confirmed&&def.id==="binladen"&&!def.isBlocking&&def.hitStun<=0){
+      // Always call rng.chance() unconditionally so both peers advance the RNG sequence
+      // identically every frame. Gating the roll on `confirmed` caused the sequences to
+      // diverge whenever one peer had confirmed a frame the other was still predicting.
+      if(def.id==="binladen"&&!def.isBlocking&&def.hitStun<=0){
         if(g.rng.chance(ELUSIVE_CHANCE)){
-          // Dodge: skip damage, no hitstun, no knockback, brief flash
           g.fx.push({x:def.x+CW/2,y:def.y+30,f:0,t:"dodge"});
-          g.snd.push("dodge");
-          // Small i-frame
+          if(confirmed)g.snd.push("dodge");
           def.hitStun=4;
-          // Tiny back-step for visual clarity
           const dir=atk.x<def.x?1:-1;
           def.vx=dir*3;
           return;
@@ -1240,11 +1246,12 @@ function ActiveGame(){
       setUsedRemoteInput(frame,remoteMask);
       const p1Mask=localRole==="p1"?localMask:remoteMask;
       const p2Mask=localRole==="p2"?localMask:remoteMask;
-      const confirmed=hasRemoteInput(frame);
+      // Use the same confirmed definition as rollbackFromFrame (f<=confirmedFrame) so both
+      // simulation paths take identical code branches for the same frame number.
+      const confirmed=frame<=confirmedRemoteFrameR.current;
       G.current=stepFrame(G.current,p1Mask,p2Mask,frame,confirmed);
       lastRemoteMaskR.current=remoteMask;
       simFrameR.current++;
-      // Only play sounds for confirmed frames (avoid spurious sounds on predicted frames that may rollback)
       if(confirmed)playQueued(G.current);
       else G.current.snd=[];
     };
