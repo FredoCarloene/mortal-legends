@@ -281,10 +281,14 @@ const sfx=new Sfx();
 // IMPORTANT: All randomness in this function must use g.rng — never Math.random.
 // Visual flame trail randomness moved to render side (drawProj).
 function updProj(g){
-  g.projectiles=g.projectiles.filter(p=>{
+  // In-place compaction avoids allocating a new Array every stepFrame call.
+  let pi=0;
+  for(let i=0;i<g.projectiles.length;i++){
+    const p=g.projectiles[i];
     p.age++;
     const tg=p.owner==="p1"?g.p2:g.p1;
     const tx=tg.x+CW/2,ty=tg.y+CH/2;
+    let keep=false;
     if(p.type==="boomerang"){
       if(p.phase==="out"){
         const dx=tx-p.x;
@@ -292,6 +296,7 @@ function updProj(g){
         p.y+=(ty-p.y)*.05;
         p.rotation+=.5;
         if(Math.abs(dx)<15||p.age>80)p.phase="back";
+        keep=p.age<150;
       }else{
         const ow=p.owner==="p1"?g.p1:g.p2;
         const ox=ow.x+CW/2;
@@ -299,9 +304,9 @@ function updProj(g){
         p.x+=dx>0?Math.min(9,dx):Math.max(-9,dx);
         p.y+=((ow.y+35)-p.y)*.08;
         p.rotation+=.5;
-        if(Math.abs(dx)<20)return false;
+        keep=Math.abs(dx)>=20&&p.age<150;
       }
-      if(Math.abs(p.x-tx)<35&&Math.abs(p.y-ty)<50&&!p.hit){
+      if(keep&&Math.abs(p.x-tx)<35&&Math.abs(p.y-ty)<50&&!p.hit){
         p.hit=true;
         const dm=tg.isBlocking?2:10;
         tg.health=Math.max(0,tg.health-dm);
@@ -311,7 +316,6 @@ function updProj(g){
         g.snd.push(tg.isBlocking?"block":"hit");
         (p.owner==="p1"?g.p1:g.p2).dd+=dm;
       }
-      return p.age<150;
     }else if(p.type==="rocket"){
       p.x+=p.dir*6;
       p.rotation=(p.rotation||0)+0.02*p.dir;
@@ -325,12 +329,13 @@ function updProj(g){
         for(const[oX,oY]of ROCKET_FX_OFFSETS)g.fx.push({x:tx+oX,y:tg.y+20+oY,f:0,t:"special"});
         g.snd.push(tg.isBlocking?"block":"rocketExplode");
         (p.owner==="p1"?g.p1:g.p2).dd+=dm;
-        return false;
+      }else{
+        keep=p.x>-20&&p.x<W+20;
       }
-      return p.x>-20&&p.x<W+20;
     }
-    return false;
-  });
+    if(keep)g.projectiles[pi++]=p;
+  }
+  g.projectiles.length=pi;
 }
 
 // ─── Drawing functions (render-side only — Math.random allowed here) ────────
@@ -981,7 +986,11 @@ function ActiveGame(){
       if(fr%120===0)g.snd.push("bgDrone");
     }
 
-    g.fx=g.fx.map(e=>({...e,f:e.f+1})).filter(e=>e.f<20);
+    // Mutate fx in-place: avoids allocating new objects+array every stepFrame call,
+    // which caused GC pressure when rollback re-simulated multiple frames per rAF.
+    let fi=0;
+    for(let i=0;i<g.fx.length;i++){g.fx[i].f++;if(g.fx[i].f<20)g.fx[fi++]=g.fx[i];}
+    g.fx.length=fi;
     if(g.shake>0)g.shake--;
     if(g.flash>0)g.flash--;
     return g;
@@ -1298,7 +1307,7 @@ function ActiveGame(){
       const fr=renderFrameR.current++;
       const g=G.current;
       ctx.save();
-      if(g.shake>0)ctx.translate((Math.random()-.5)*g.shake*3,(Math.random()-.5)*g.shake*3);
+      if(g.shake>0)ctx.translate((Math.random()-.5)*g.shake*2,(Math.random()-.5)*g.shake*2);
       ctx.clearRect(-10,-10,W+20,H+20);
       drawStage(ctx,fr);
       drawChar(ctx,g.p1,g.p1.facing,fr,g.p1.action,g.p1.isBlocking,g.p1.superReady,g.p1.superActive,0,g.p1.superBoomerangs);
